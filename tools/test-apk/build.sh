@@ -59,7 +59,9 @@ mkdir -p "$work/jni/arm64-v8a" "$work/pkg/scripts" "$work/pkg/apps/hestia-app"
 cp "$target_dir/aarch64-linux-android/release/libhestia_app.so" "$work/jni/arm64-v8a/"
 cp scripts/android-package.sh "$work/pkg/scripts/"
 cp -r apps/hestia-app/android "$work/pkg/apps/hestia-app/"
-sed -i "s|package=\"com.mroz59.hestia.rs\"|package=\"com.mroz59.hestia.rs.$variant\"|; s|android:label=\"Hestia RS\"|android:label=\"$app_label\"|" \
+# The activity class keeps its Java package (com.mroz59.hestia.rs), so its
+# short manifest name must be made absolute before the app ID changes.
+sed -i "s|\"\.HestiaActivity\"|\"com.mroz59.hestia.rs.HestiaActivity\"|g; s|package=\"com.mroz59.hestia.rs\"|package=\"com.mroz59.hestia.rs.$variant\"|; s|android:label=\"Hestia RS\"|android:label=\"$app_label\"|" \
     "$work/pkg/apps/hestia-app/android/AndroidManifest.xml"
 
 version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
