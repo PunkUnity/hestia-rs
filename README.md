@@ -1,7 +1,11 @@
-# Hestia RS test builds (PunkUnity)
+# Hestia RS test builds (fallback copy)
 
-`hestia-rs-test-arm64.apk`: arm64 test build, app ID `com.mroz59.hestia.rs.test`, label "Hestia RS (test)". It installs beside the official nightly. It's signed with a test key, so each test build installs over the previous one.
+The main download is the `test-latest` release, built by the fork's "Test APK" workflow:
+https://github.com/PunkUnity/hestia-rs/releases/download/test-latest/hestia-rs-test-arm64.apk
+
+This branch keeps a copy of the latest build made in the cloud session:
 
 | Build | Branch | Contents |
 | --- | --- | --- |
-| 0.1.0-test.1 | test/android-batch1 (54a7bd1) | per-vendor MediaCodec low-latency keys (fix/mediacodec-vendor-keys); pages clear of the system bars (fix/android-safe-area) |
+| 0.1.0-test+105049a (code 468180) | test/android-batch2 | safe-area fix; per-vendor MediaCodec keys (fix/mediacodec-low-latency-keys); test-APK tooling |
+| 0.1.0-test.1+3a24e85 (code 2001) | test/android-batch1 | the first test build (shows "local build" in About) |
