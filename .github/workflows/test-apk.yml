@@ -1,6 +1,9 @@
 # PunkUnity fork only: builds "Hestia RS (test)" from a test/* branch and
 # puts it on the rolling "test-latest" release, so the phone always downloads
 # https://github.com/PunkUnity/hestia-rs/releases/download/test-latest/hestia-rs-test-arm64.apk
+# A test/baseline-* branch builds "Hestia RS (baseline)" instead, a third app
+# for A/B runs, on its own "baseline-latest" release:
+# https://github.com/PunkUnity/hestia-rs/releases/download/baseline-latest/hestia-rs-baseline-arm64.apk
 name: Test APK
 
 on:
@@ -12,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: test-apk
+  group: test-apk-${{ startsWith(github.ref_name, 'test/baseline-') && 'baseline' || 'test' }}
   cancel-in-progress: true
 
 jobs:
@@ -20,6 +23,8 @@ jobs:
     if: github.repository == 'PunkUnity/hestia-rs'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      HESTIA_TEST_VARIANT: ${{ startsWith(github.ref_name, 'test/baseline-') && 'baseline' || 'test' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -46,16 +51,19 @@ jobs:
       - name: Build the test APK
         run: tools/test-apk/build.sh apks
 
-      - name: Publish to the test-latest release
+      - name: Publish to the test-latest or baseline-latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          info=$(cat apks/hestia-rs-test-arm64.txt)
+          v=$HESTIA_TEST_VARIANT
+          tag=$v-latest
+          label="Hestia RS ($v)"
+          info=$(cat apks/hestia-rs-$v-arm64.txt)
           notes="$info"$'\n\n'"Built $(date -u '+%Y-%m-%d %H:%M UTC') from ${GITHUB_REF_NAME} (${GITHUB_SHA::7})."
-          if gh release view test-latest >/dev/null 2>&1; then
-            gh release upload test-latest apks/hestia-rs-test-arm64.apk apks/hestia-rs-test-arm64.txt --clobber
-            gh release edit test-latest --title "Hestia RS (test): ${GITHUB_REF_NAME} ${GITHUB_SHA::7}" --notes "$notes" --prerelease
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" apks/hestia-rs-$v-arm64.apk apks/hestia-rs-$v-arm64.txt --clobber
+            gh release edit "$tag" --title "$label: ${GITHUB_REF_NAME} ${GITHUB_SHA::7}" --notes "$notes" --prerelease
           else
-            gh release create test-latest apks/hestia-rs-test-arm64.apk apks/hestia-rs-test-arm64.txt \
-              --title "Hestia RS (test): ${GITHUB_REF_NAME} ${GITHUB_SHA::7}" --notes "$notes" --prerelease --target "$GITHUB_SHA"
+            gh release create "$tag" apks/hestia-rs-$v-arm64.apk apks/hestia-rs-$v-arm64.txt \
+              --title "$label: ${GITHUB_REF_NAME} ${GITHUB_SHA::7}" --notes "$notes" --prerelease --target "$GITHUB_SHA"
           fi

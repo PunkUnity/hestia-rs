@@ -9,6 +9,10 @@
 # Needs the Android SDK and NDK (setup-android.sh), JDK 17, rustup with the
 # aarch64-linux-android target, and cargo-ndk.
 #
+# HESTIA_TEST_VARIANT=baseline builds "Hestia RS (baseline)"
+# (com.mroz59.hestia.rs.baseline) instead: a third app for A/B runs, so a
+# build without a change can sit beside the test build and the nightly.
+#
 # Usage: tools/test-apk/build.sh [output-dir]   (default: apks/)
 set -euo pipefail
 
@@ -33,6 +37,13 @@ for need in "$ANDROID_NDK_HOME" "$ANDROID_JAR" "$ANDROID_HOME/build-tools/34.0.0
     [ -e "$need" ] || { echo "missing $need: run tools/test-apk/setup-android.sh" >&2; exit 1; }
 done
 
+variant=${HESTIA_TEST_VARIANT:-test}
+case $variant in
+    test) app_label="Hestia RS (test)" ;;
+    baseline) app_label="Hestia RS (baseline)" ;;
+    *) echo "unknown HESTIA_TEST_VARIANT $variant (test or baseline)" >&2; exit 1 ;;
+esac
+
 cd "$root"
 commit=$(git rev-parse --short=7 HEAD)
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -48,14 +59,14 @@ mkdir -p "$work/jni/arm64-v8a" "$work/pkg/scripts" "$work/pkg/apps/hestia-app"
 cp "$target_dir/aarch64-linux-android/release/libhestia_app.so" "$work/jni/arm64-v8a/"
 cp scripts/android-package.sh "$work/pkg/scripts/"
 cp -r apps/hestia-app/android "$work/pkg/apps/hestia-app/"
-sed -i 's|package="com.mroz59.hestia.rs"|package="com.mroz59.hestia.rs.test"|; s|android:label="Hestia RS"|android:label="Hestia RS (test)"|' \
+sed -i "s|package=\"com.mroz59.hestia.rs\"|package=\"com.mroz59.hestia.rs.$variant\"|; s|android:label=\"Hestia RS\"|android:label=\"$app_label\"|" \
     "$work/pkg/apps/hestia-app/android/AndroidManifest.xml"
 
 version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 # Minutes since 2026-01-01: always higher than the last build's.
 code=$(( ($(date +%s) - 1767225600) / 60 ))
 export ANDROID_KEYSTORE="$here/test.keystore" ANDROID_KEYSTORE_PASSWORD=android
-bash "$work/pkg/scripts/android-package.sh" "$work/jni" "$work/apks" "$code" "$version-test+$commit"
-cp "$work/apks/hestia-rs-android-arm64-v8a.apk" "$out/hestia-rs-test-arm64.apk"
-printf '%s\n' "Hestia RS (test) $version-test+$commit, branch $branch, version code $code" | tee "$out/hestia-rs-test-arm64.txt"
-echo "APK: $out/hestia-rs-test-arm64.apk"
+bash "$work/pkg/scripts/android-package.sh" "$work/jni" "$work/apks" "$code" "$version-$variant+$commit"
+cp "$work/apks/hestia-rs-android-arm64-v8a.apk" "$out/hestia-rs-$variant-arm64.apk"
+printf '%s\n' "$app_label $version-$variant+$commit, branch $branch, version code $code" | tee "$out/hestia-rs-$variant-arm64.txt"
+echo "APK: $out/hestia-rs-$variant-arm64.apk"
