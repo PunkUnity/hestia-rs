@@ -212,33 +212,70 @@ impl MediaCodecDecoder {
             }
             None => None,
         };
-        let media = |color: Option<i32>| {
+        let vendor_keys = crate::decoder_tuning::vendor_low_latency_keys(component);
+        let media = |color: Option<i32>, vendor: bool| {
             let mut media = Self::media_format(mime, w, h, fps);
+            if vendor {
+                for &(key, value) in &vendor_keys {
+                    media.set_i32(key, value);
+                }
+            }
             if let Some(color) = color {
                 media.set_i32("color-format", color);
             }
             media
         };
         match &images {
-            Some((_, window)) => codec
-                .configure(&media(None), Some(window), MediaCodecDirection::Decoder)
-                .map_err(|e| format!("configure {mime}: {e:?}"))?,
-            // NV12 if the codec will convert to it (Codec2 does), else its own.
-            None => {
-                if codec
-                    .configure(
-                        &media(Some(COLOR_YUV420_SEMI_PLANAR)),
-                        None,
-                        MediaCodecDirection::Decoder,
-                    )
-                    .is_err()
-                {
-                    // A failed configure may leave the component unusable.
+            Some((_, window)) => {
+                if let Err(e) = codec.configure(&media(None, true), Some(window), MediaCodecDirection::Decoder) {
+                    if vendor_keys.is_empty() {
+                        return Err(format!("configure {mime}: {e:?}"));
+                    }
+                    // Some decoders refuse a vendor key they don't know. A
+                    // failed configure may leave the component unusable, so
+                    // start over with a new one and the standard keys alone.
+                    warn!(
+                        "MediaCodec {} refused its vendor low-latency keys ({e:?}); trying without them",
+                        component.unwrap_or(mime)
+                    );
                     drop(codec);
                     codec = create_codec()?;
                     codec
-                        .configure(&media(None), None, MediaCodecDirection::Decoder)
-                        .map_err(|e| format!("configure {mime} for buffer output: {e:?}"))?;
+                        .configure(&media(None, false), Some(window), MediaCodecDirection::Decoder)
+                        .map_err(|e| format!("configure {mime}: {e:?}"))?;
+                }
+            }
+            // NV12 if the codec will convert to it (Codec2 does), else its own.
+            None => {
+                // NV12 with vendor keys, then the codec's own format, then
+                // both again without vendor keys.
+                let attempts = [
+                    (Some(COLOR_YUV420_SEMI_PLANAR), true),
+                    (None, true),
+                    (Some(COLOR_YUV420_SEMI_PLANAR), false),
+                    (None, false),
+                ];
+                let mut last = String::new();
+                let mut configured = false;
+                for (i, &(color, vendor)) in attempts.iter().enumerate() {
+                    if !vendor && vendor_keys.is_empty() {
+                        break;
+                    }
+                    if i > 0 {
+                        // A failed configure may leave the component unusable.
+                        drop(codec);
+                        codec = create_codec()?;
+                    }
+                    match codec.configure(&media(color, vendor), None, MediaCodecDirection::Decoder) {
+                        Ok(()) => {
+                            configured = true;
+                            break;
+                        }
+                        Err(e) => last = format!("{e:?}"),
+                    }
+                }
+                if !configured {
+                    return Err(format!("configure {mime} for buffer output: {last}"));
                 }
             }
         }
@@ -272,15 +309,7 @@ impl MediaCodecDecoder {
         media.set_i32("priority", 0);
         media.set_i32("operating-rate", i32::from(i16::MAX));
         media.set_i32("low-latency", 1);
-        for key in [
-            "vendor.qti-ext-dec-low-latency.enable",
-            "vendor.qti-ext-dec-picture-order.enable",
-            "vendor.rtc-ext-dec-low-latency.enable",
-            "vendor.low-latency.enable",
-            "vendor.hisi-ext-low-latency-video-dec.video-scene-for-low-latency-req",
-        ] {
-            media.set_i32(key, 1);
-        }
+        // Vendor keys are added per decoder (decoder_tuning).
         media
     }
 

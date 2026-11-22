@@ -36,6 +36,7 @@ pub mod audio_out;
 pub mod audio_playback;
 pub mod color;
 pub mod decode;
+pub mod decoder_tuning;
 pub mod dump;
 #[cfg(target_os = "android")]
 pub mod gpu_video;
