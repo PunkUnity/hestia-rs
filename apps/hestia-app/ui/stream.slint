@@ -166,6 +166,8 @@ component QuickTile inherits Focusable {
 export component StreamView inherits Rectangle {
     in property <image> frame;
     in property <bool> picture-in-picture: false;
+    // The picture is on the direct video surface behind the window.
+    in property <bool> direct-video: false;
     in property <string> stats;
     // Shown over the video while there is no picture yet.
     in property <string> status;
@@ -244,7 +246,7 @@ export component StreamView inherits Rectangle {
         { id: "alt-f4", label: "Alt+F4" },
     ];
 
-    background: black;
+    background: root.direct-video ? transparent : black;
     // Fill mode makes the picture larger than the view.
     clip: true;
 

@@ -111,6 +111,20 @@ impl Hotkey {
     }
 }
 
+/// Direct video: frames sent to the display that it never showed (decoded
+/// minus presented), when the presentation is being measured.
+fn direct_unshown(decoded: u64) -> u64 {
+    #[cfg(target_os = "android")]
+    {
+        let presented = &hestia_media::direct_video::PRESENTED;
+        if presented.measuring() {
+            return decoded.saturating_sub(presented.frames());
+        }
+    }
+    let _ = decoded;
+    0
+}
+
 #[derive(Clone)]
 struct Totals {
     at: Instant,
@@ -191,7 +205,7 @@ impl Listener {
             decoded: self.decode.decoded.load(Ordering::Relaxed),
             decode_us: self.decode.decode_time_us.load(Ordering::Relaxed),
             decoder_dropped: self.decode.dropped.load(Ordering::Relaxed),
-            superseded: self.present.superseded(),
+            superseded: self.present.superseded() + direct_unshown(self.decode.decoded.load(Ordering::Relaxed)),
         };
         let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
         let prev = last.replace(now.clone())?;
@@ -406,8 +420,21 @@ impl Controller {
             provenance_requested: AtomicBool::new(false),
             undecoded_secs: AtomicU32::new(0),
         });
-        self.ui(|ui| {
+        // Android direct video: the helper adds the surface now, while the
+        // RTSP handshake runs; the decoder waits a little for it.
+        let direct =
+            cfg!(target_os = "android") && launched.settings.direct_video && launched.settings.hardware_decoding;
+        #[cfg(target_os = "android")]
+        {
+            hestia_media::direct_video::PRESENTED.reset(config.fps);
+            hestia_media::direct_video::set_wanted(direct);
+        }
+        if direct {
+            platform::set_direct_video(true, config.width, config.height, config.fps);
+        }
+        self.ui(move |ui| {
             ui.clear_video();
+            ui.set_stream_direct_video(direct);
             ui.set_stream_status("Waiting for video…".into());
         });
         let session = host
@@ -562,6 +589,12 @@ impl Controller {
                 }
                 #[cfg(target_os = "android")]
                 {
+                    let presented = &hestia_media::direct_video::PRESENTED;
+                    match presented.summary() {
+                        Some(summary) => r.field("Direct video", "shown on the display", summary.line()),
+                        None if presented.measuring() => r.field("Direct video", "shown on the display", "no frames"),
+                        None => {}
+                    }
                     for (label, counter) in [
                         ("frames collected while input idle", &decode.idle_output),
                         ("frames with codec input pressure", &decode.codec_input_busy),
@@ -616,8 +649,12 @@ impl Controller {
             let show_report = c.finish_report(session_report, &outcome, Some(host_id.clone()));
             platform::set_keyboard_visible(false);
             platform::set_stream_mode(false, hestia_core::StreamOrientation::default());
+            #[cfg(target_os = "android")]
+            hestia_media::direct_video::set_wanted(false);
+            platform::set_direct_video(false, 0, 0, 0);
             platform::set_gamepads_streaming(false);
             c.ui(move |ui| {
+                ui.set_stream_direct_video(false);
                 if ui.stream_fullscreen() {
                     ui.set_window_fullscreen(false);
                     ui.set_stream_fullscreen(false);

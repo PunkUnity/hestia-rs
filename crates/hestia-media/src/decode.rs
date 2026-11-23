@@ -22,6 +22,9 @@ pub enum FrameBuffer {
     /// A picture the window's GPU renderer takes at draw time (a hardware
     /// buffer, or 4:2:0 planes it converts itself).
     Native(crate::native_picture::NativePicture),
+    /// Already sent to the display by the decoder (Android direct video):
+    /// nothing for the UI to draw.
+    Direct,
 }
 
 /// The decoder hands its buffer and its timing to the presenter together.
@@ -57,14 +60,14 @@ impl DecodedFrame {
     pub fn rgba(&self) -> Option<&[u8]> {
         match &self.buffer {
             FrameBuffer::Rgba(data) => Some(data),
-            FrameBuffer::Native(_) => None,
+            FrameBuffer::Native(_) | FrameBuffer::Direct => None,
         }
     }
 
     /// Keeps a CPU allocation for reuse without retaining a native picture
     /// (dropping it releases the hardware image or returns the planes).
     pub fn discard_native(&mut self) {
-        if matches!(self.buffer, FrameBuffer::Native(_)) {
+        if matches!(self.buffer, FrameBuffer::Native(_) | FrameBuffer::Direct) {
             self.buffer = FrameBuffer::Rgba(Vec::new());
         }
     }
@@ -78,7 +81,7 @@ impl DecodedFrame {
                 data.resize(width as usize * height as usize * 4, 0);
                 data
             }
-            FrameBuffer::Native(_) => unreachable!("native output was discarded"),
+            FrameBuffer::Native(_) | FrameBuffer::Direct => unreachable!("native output was discarded"),
         }
     }
 }

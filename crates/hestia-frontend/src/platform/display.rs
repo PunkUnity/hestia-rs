@@ -169,3 +169,32 @@ pub fn set_stream_mode(on: bool, orientation: hestia_core::StreamOrientation) {
     #[cfg(not(target_os = "android"))]
     let _ = (on, orientation);
 }
+
+/// Android direct video on/off: the helper adds (or removes) the surface
+/// behind the window that the decoder renders to, sized to the stream.
+pub fn set_direct_video(on: bool, width: u32, height: u32, fps: u32) {
+    #[cfg(target_os = "android")]
+    {
+        let result = with_helper(|env, activity, helper| {
+            use jni::objects::JValue;
+            env.call_static_method(
+                helper,
+                "setDirectVideo",
+                "(Landroid/app/Activity;ZIII)V",
+                &[
+                    JValue::Object(activity),
+                    JValue::Bool(u8::from(on)),
+                    JValue::Int(width as i32),
+                    JValue::Int(height as i32),
+                    JValue::Int(fps as i32),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = result {
+            log::warn!("switching direct video failed: {e}");
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = (on, width, height, fps);
+}

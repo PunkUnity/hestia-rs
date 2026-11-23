@@ -175,6 +175,7 @@ pub struct SettingsForm {
     pub show_menu_button: bool,
     pub hardware_decoding: bool,
     pub gpu_video: bool,
+    pub direct_video: bool,
     pub orientation: i32,
 }
 
@@ -273,6 +274,9 @@ pub trait View {
     fn request_redraw(&self);
     fn set_stream_stats(&self, text: String);
     fn set_stream_status(&self, text: String);
+    /// The stream's picture is on the direct video surface behind the
+    /// window: the stream view leaves its area clear.
+    fn set_stream_direct_video(&self, _on: bool) {}
     fn set_stream_show_stats(&self, on: bool);
     fn stream_show_stats(&self) -> bool;
     fn set_stream_fullscreen(&self, on: bool);

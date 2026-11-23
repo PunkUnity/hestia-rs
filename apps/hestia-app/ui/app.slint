@@ -11,7 +11,9 @@ export component AppWindow inherits Window {
     preferred-height: 760px;
     min-width: 340px;
     min-height: 400px;
-    background: root.stream-picture-in-picture ? black : Theme.bg;
+    // Direct video: the picture is on a surface behind the window, so the
+    // window is clear wherever the UI draws nothing.
+    background: root.stream-direct-video && root.screen == 4 ? transparent : root.stream-picture-in-picture ? black : Theme.bg;
     default-font-family: Theme.font;
     default-font-size: Theme.body-size;
     forward-focus: keys;
@@ -125,6 +127,7 @@ export component AppWindow inherits Window {
     // Stream
     in property <image> stream-frame;
     in property <bool> stream-picture-in-picture: false;
+    in property <bool> stream-direct-video: false;
     property <float> stream-picture-aspect: root.stream-frame.height > 0
         ? 1.0 * root.stream-frame.width / root.stream-frame.height : 0;
     callback stream-pip-config(bool, float);
@@ -201,6 +204,7 @@ export component AppWindow inherits Window {
     in-out property <bool> cfg-show-menu-button: false;
     in-out property <bool> cfg-hardware-decoding: true;
     in-out property <bool> cfg-gpu-video: true;
+    in-out property <bool> cfg-direct-video: true;
     in property <[string]> cfg-profile-names;
     in-out property <int> cfg-profile-pick;
     callback settings-save-profile(string);
@@ -453,6 +457,7 @@ export component AppWindow inherits Window {
             }
             frame: root.stream-frame;
             picture-in-picture: root.stream-picture-in-picture;
+            direct-video: root.stream-direct-video;
             stats: root.stream-stats;
             status: root.stream-status;
             title: root.session-title;
@@ -639,6 +644,7 @@ export component AppWindow inherits Window {
             show-menu-button <=> root.cfg-show-menu-button;
             hardware-decoding <=> root.cfg-hardware-decoding;
             gpu-video <=> root.cfg-gpu-video;
+            direct-video <=> root.cfg-direct-video;
             android: root.is-android;
             orientation <=> root.cfg-orientation;
             profile-names: root.cfg-profile-names;

@@ -6,6 +6,7 @@ import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.graphics.PixelFormat;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.os.Build;
@@ -13,7 +14,11 @@ import android.os.PersistableBundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.text.InputType;
+import android.view.Gravity;
 import android.view.InputDevice;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -24,6 +29,7 @@ import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.FrameLayout;
 
 /**
  * Hestia RS's Android glue that needs the UI thread or a Java class:
@@ -41,6 +47,9 @@ public final class HestiaHelper {
 
     /** The keyboard deleted `count` characters before the cursor. */
     static native void nativeDeleteBefore(int count);
+
+    /** The direct video surface appeared, or went away (null). */
+    static native void nativeVideoSurface(Surface surface);
 
     /** A regular decoder that can accept the requested stream mode. */
     public static String findVideoDecoder(String mime, int width, int height, int fps) {
@@ -131,6 +140,88 @@ public final class HestiaHelper {
                 window.getDecorView().setSystemUiVisibility(on ? flags : 0);
             }
         });
+    }
+
+    private static VideoView sVideoView;
+
+    /**
+     * Direct video on: a SurfaceView behind the native window, which the
+     * decoder renders to and the system composes itself (often as a
+     * hardware overlay), sized to the stream's aspect ratio and centred.
+     * The window becomes translucent so the UI drawn over it can leave the
+     * stream area clear. Off: the view is removed (its surface is destroyed,
+     * which tells the decoder through nativeVideoSurface(null)).
+     */
+    public static void setDirectVideo(final Activity activity, final boolean on,
+            final int width, final int height, final int fps) {
+        activity.runOnUiThread(() -> {
+            if (sVideoView != null) {
+                ViewGroup parent = (ViewGroup) sVideoView.getParent();
+                if (parent != null) {
+                    parent.removeView(sVideoView);
+                }
+                sVideoView = null;
+            }
+            if (!on) {
+                return;
+            }
+            activity.getWindow().setFormat(PixelFormat.TRANSLUCENT);
+            VideoView view = new VideoView(activity, width, height, fps);
+            sVideoView = view;
+            activity.addContentView(view, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                    Gravity.CENTER));
+        });
+    }
+
+    /** The stream's surface: the largest rectangle of its aspect ratio that fits. */
+    static final class VideoView extends SurfaceView implements SurfaceHolder.Callback {
+        private final int videoWidth;
+        private final int videoHeight;
+        private final int fps;
+
+        VideoView(Context context, int width, int height, int fps) {
+            super(context);
+            this.videoWidth = Math.max(width, 1);
+            this.videoHeight = Math.max(height, 1);
+            this.fps = fps;
+            setFocusable(false);
+            setZOrderOnTop(false);
+            getHolder().addCallback(this);
+        }
+
+        @Override
+        protected void onMeasure(int widthSpec, int heightSpec) {
+            int w = MeasureSpec.getSize(widthSpec);
+            int h = MeasureSpec.getSize(heightSpec);
+            if ((long) w * videoHeight > (long) h * videoWidth) {
+                w = (int) ((long) h * videoWidth / videoHeight);
+            } else {
+                h = (int) ((long) w * videoHeight / videoWidth);
+            }
+            setMeasuredDimension(w, h);
+        }
+
+        @Override
+        public void surfaceCreated(SurfaceHolder holder) {
+            Surface surface = holder.getSurface();
+            if (Build.VERSION.SDK_INT >= 30 && fps > 0) {
+                try {
+                    surface.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+                } catch (IllegalArgumentException | IllegalStateException ignored) {
+                    // Refresh matching is a hint; the stream works without it.
+                }
+            }
+            nativeVideoSurface(surface);
+        }
+
+        @Override
+        public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {}
+
+        @Override
+        public void surfaceDestroyed(SurfaceHolder holder) {
+            nativeVideoSurface(null);
+        }
     }
 
     /**
