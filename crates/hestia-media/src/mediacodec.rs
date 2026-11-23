@@ -29,7 +29,14 @@ use crate::native_picture::NativePicture;
 use crate::{EncodedFrame, VideoFormat};
 
 /// Bound time spent feeding one frame when the codec is under pressure.
-const INPUT_WAIT: Duration = Duration::from_millis(20);
+///
+/// After a network stall, frames arrive in a burst and the codec can stay
+/// busy for longer than one frame. Giving up throws away a good frame, and
+/// the reference chain with it, so the stream waits for a keyframe, which
+/// takes a round trip or more on a slow link. Wait instead, while releasing
+/// output, and give up only when the codec looks stuck (well under
+/// `OUTPUT_STALL`, which switches outputs).
+const INPUT_WAIT: Duration = Duration::from_millis(500);
 const INPUT_RETRY: Duration = Duration::from_millis(4);
 const OUTPUT_POLL: Duration = Duration::from_millis(2);
 const SLOW_OUTPUT_POLL: Duration = Duration::from_millis(8);
