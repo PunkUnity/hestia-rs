@@ -1370,9 +1370,11 @@ export component SettingsPage inherits Page {
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…18, the saved profiles (100…), 20…23. 8 and 10 only exist
-    // on Android.
+    // order: 0…18 (with Direct video inserted before row 8 when visible),
+    // the saved profiles (100…), then 20…23.
     property <int> nav: -1;
+    property <bool> show-direct-video: root.android && root.hardware-decoding;
+    property <int> direct-video-row: 24;
     focus-first => {
         if (root.nav == -1) {
             root.nav = 0;
@@ -1400,10 +1402,18 @@ export component SettingsPage inherits Page {
         return root.sheet < 0 && root.nav == i;
     }
     pure function pos(i: int) -> int {
-        return i < 19 ? i : (i >= 100 ? 19 + (i - 100) : 19 + root.profile-count + (i - 20));
+        if (i == root.direct-video-row) {
+            return 8;
+        }
+        let p = i < 19 ? i : (i >= 100 ? 19 + (i - 100) : 19 + root.profile-count + (i - 20));
+        return root.show-direct-video && p >= 8 ? p + 1 : p;
     }
     pure function index-at(p: int) -> int {
-        return p < 19 ? p : (p < 19 + root.profile-count ? 100 + (p - 19) : 20 + (p - 19 - root.profile-count));
+        if (root.show-direct-video && p == 8) {
+            return root.direct-video-row;
+        }
+        let row = root.show-direct-video && p > 8 ? p - 1 : p;
+        return row < 19 ? row : (row < 19 + root.profile-count ? 100 + (row - 19) : 20 + (row - 19 - root.profile-count));
     }
     pure function valid(i: int) -> bool {
         // Row 8: zero-copy video (Android, with hardware decoding) or GPU
@@ -1412,7 +1422,7 @@ export component SettingsPage inherits Page {
     }
     pure function step(from: int, dir: int) -> int {
         let p = root.pos(from) + dir;
-        let last = 22 + root.profile-count;
+        let last = 22 + root.profile-count + (root.show-direct-video ? 1 : 0);
         if (p < 0 || p > last) {
             return from;
         }
@@ -1669,11 +1679,17 @@ export component SettingsPage inherits Page {
                                 root.nav = 7;
                             }
                         }
-                        // Not in the remote's row order yet (touch only).
-                        if root.android && root.hardware-decoding: SwitchRow {
+                        if root.show-direct-video: SwitchRow {
                             label: "Direct video";
                             hint: "The decoder draws straight to the screen, paced by the display. Turn off to draw video through the app's own frame";
                             checked <=> root.direct-video;
+                            want-focus: root.at(root.direct-video-row);
+                            nav(k) => {
+                                return root.move(root.direct-video-row, k);
+                            }
+                            entered => {
+                                root.nav = root.direct-video-row;
+                            }
                         }
                         if root.android && root.hardware-decoding: SwitchRow {
                             label: "Zero-copy video";
