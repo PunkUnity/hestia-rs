@@ -9,6 +9,7 @@
 
 #[cfg(target_os = "android")]
 mod android_pip;
+mod appearance;
 #[cfg(not(target_os = "android"))]
 mod desktop_input;
 #[cfg(not(target_os = "android"))]
@@ -20,7 +21,6 @@ mod slint_ui;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hestia_core::store::{AppearanceTheme, Store};
 use hestia_frontend::Controller;
 use hestia_frontend::presentation::GpuWindow;
 
@@ -51,28 +51,7 @@ fn run_window(
     #[cfg(not(target_os = "android"))]
     desktop_input::install();
     let ui = AppWindow::new()?;
-    let themes = [
-        AppearanceTheme::Hearth,
-        AppearanceTheme::Daylight,
-        AppearanceTheme::Midnight,
-    ];
-    let appearance_dir = data_dir.clone();
-    match Store::open(&appearance_dir).and_then(|store| store.load_theme()) {
-        Ok(theme) => ui.set_saved_theme(themes.iter().position(|&entry| entry == theme).unwrap_or_default() as i32),
-        Err(e) => log::warn!("could not load appearance: {e}"),
-    }
-    ui.on_save_theme(move |index| {
-        let Some(&theme) = themes.get(index as usize) else {
-            return false;
-        };
-        match Store::open(&appearance_dir).and_then(|store| store.save_theme(theme)) {
-            Ok(()) => true,
-            Err(e) => {
-                log::warn!("could not save appearance: {e}");
-                false
-            }
-        }
-    });
+    appearance::configure(&ui, data_dir.clone());
     ui.set_is_android(cfg!(target_os = "android"));
     #[cfg(target_os = "android")]
     ui.set_has_touch_input(!matches!(

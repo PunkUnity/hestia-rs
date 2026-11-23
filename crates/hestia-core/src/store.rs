@@ -25,20 +25,25 @@ pub struct StoredHosts {
     pub hosts: Vec<HostRecord>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AppearanceTheme {
-    Daylight,
-    Midnight,
-    #[default]
-    #[serde(other)]
-    Hearth,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    #[serde(alias = "theme")]
+    pub base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corners: Option<String>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
-#[serde(default)]
-struct Appearance {
-    theme: AppearanceTheme,
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            base: "hearth".into(),
+            palette: None,
+            corners: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,12 +108,12 @@ impl Store {
         self.write("settings.json", settings)
     }
 
-    pub fn load_theme(&self) -> io::Result<AppearanceTheme> {
-        Ok(self.read::<Appearance>("appearance.json")?.unwrap_or_default().theme)
+    pub fn load_appearance(&self) -> io::Result<Appearance> {
+        Ok(self.read("appearance.json")?.unwrap_or_default())
     }
 
-    pub fn save_theme(&self, theme: AppearanceTheme) -> io::Result<()> {
-        self.write("appearance.json", &Appearance { theme })
+    pub fn save_appearance(&self, appearance: &Appearance) -> io::Result<()> {
+        self.write("appearance.json", appearance)
     }
 
     pub fn load_profiles(&self) -> io::Result<Vec<crate::profiles::StreamProfile>> {
@@ -134,22 +139,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_defaults_to_hearth_and_survives_reopening_the_store() {
+    fn appearance_reads_the_old_theme_and_saves_independent_parts() {
         let dir = std::env::temp_dir().join(format!("hestia-appearance-test-{}", std::process::id()));
         let store = Store::open(&dir).unwrap();
-        assert_eq!(store.load_theme().unwrap(), AppearanceTheme::Hearth);
-        store.save_theme(AppearanceTheme::Daylight).unwrap();
-        assert_eq!(
-            Store::open(&dir).unwrap().load_theme().unwrap(),
-            AppearanceTheme::Daylight
-        );
-        store.save_theme(AppearanceTheme::Midnight).unwrap();
-        assert_eq!(
-            Store::open(&dir).unwrap().load_theme().unwrap(),
-            AppearanceTheme::Midnight
-        );
-        fs::write(dir.join("appearance.json"), r#"{"theme":"future-theme"}"#).unwrap();
-        assert_eq!(store.load_theme().unwrap(), AppearanceTheme::Hearth);
+        assert_eq!(store.load_appearance().unwrap(), Appearance::default());
+        fs::write(dir.join("appearance.json"), r#"{"theme":"midnight"}"#).unwrap();
+        let mut appearance = store.load_appearance().unwrap();
+        assert_eq!(appearance.base, "midnight");
+        assert_eq!(appearance.palette, None);
+        assert_eq!(appearance.corners, None);
+        appearance.palette = Some("hearth".into());
+        appearance.corners = Some("daylight".into());
+        store.save_appearance(&appearance).unwrap();
+        assert_eq!(Store::open(&dir).unwrap().load_appearance().unwrap(), appearance);
         fs::remove_dir_all(dir).unwrap();
     }
 }

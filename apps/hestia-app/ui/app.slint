@@ -5,6 +5,13 @@ import { StreamView, PadControl } from "stream.slint";
 export { HostCard, AppCard, CommandRow, PreflightRow } from "pages.slint";
 export { PadControl } from "stream.slint";
 
+export struct AppearanceChoices {
+    base: int,
+    // Zero follows the base. Other values are one-based catalogue indices.
+    palette: int,
+    corners: int,
+}
+
 export component AppWindow inherits Window {
     title: "Hestia";
     preferred-width: 1180px;
@@ -22,7 +29,7 @@ export component AppWindow inherits Window {
     init => {
         Theme.window-width = self.width;
         Theme.window-height = self.height;
-        Theme.selection = root.effective-theme;
+        root.preview-theme();
     }
     changed width => {
         Theme.window-width = self.width;
@@ -34,14 +41,24 @@ export component AppWindow inherits Window {
     // 0 = hosts, 1 = apps, 2 = session (launching / errors), 3 = settings, 4 = stream, 5 = host tools,
     // 6 = stream report
     in-out property <int> screen: 0;
-    in-out property <int> saved-theme: 0;
+    in-out property <AppearanceChoices> saved-appearance;
+    in property <[string]> theme-names;
+    in property <[string]> theme-part-names;
     in-out property <int> cfg-theme: 0;
+    in-out property <int> cfg-palette: 0;
+    in-out property <int> cfg-corners: 0;
     property <bool> theme-save-failed;
-    property <int> effective-theme: root.screen == 3 ? root.cfg-theme : root.saved-theme;
-    changed effective-theme => {
-        Theme.selection = root.effective-theme;
+    property <AppearanceChoices> draft-appearance: { base: root.cfg-theme, palette: root.cfg-palette, corners: root.cfg-corners };
+    property <AppearanceChoices> effective-appearance: root.screen == 3 ? root.draft-appearance : root.saved-appearance;
+    changed effective-appearance => {
+        root.preview-theme();
     }
-    callback save-theme(int) -> bool;
+    function preview-theme() {
+        let choice = root.effective-appearance;
+        Theme.selection = choice.palette == 0 ? choice.base : choice.palette - 1;
+        Theme.corner-selection = choice.corners == 0 ? choice.base : choice.corners - 1;
+    }
+    callback save-appearance(AppearanceChoices) -> bool;
 
     // Startup (identity generation on first run)
     in property <bool> starting: true;
@@ -400,7 +417,9 @@ export component AppWindow inherits Window {
             }
             settings => {
                 root.settings-return = root.screen;
-                root.cfg-theme = root.saved-theme;
+                root.cfg-theme = root.saved-appearance.base;
+                root.cfg-palette = root.saved-appearance.palette;
+                root.cfg-corners = root.saved-appearance.corners;
                 root.theme-save-failed = false;
                 root.screen = 3;
                 root.open-settings();
@@ -665,6 +684,10 @@ export component AppWindow inherits Window {
             gpu-video <=> root.cfg-gpu-video;
             direct-video <=> root.cfg-direct-video;
             theme <=> root.cfg-theme;
+            palette <=> root.cfg-palette;
+            corners <=> root.cfg-corners;
+            theme-names: root.theme-names;
+            theme-part-names: root.theme-part-names;
             theme-save-failed: root.theme-save-failed;
             android: root.is-android;
             touch-controls: root.has-touch-input;
@@ -693,10 +716,13 @@ export component AppWindow inherits Window {
                 root.screen = root.settings-return;
             }
             save => {
-                if (root.cfg-theme != root.saved-theme && !root.save-theme(root.cfg-theme)) {
+                let draft = root.draft-appearance;
+                let saved = root.saved-appearance;
+                let changed = draft.base != saved.base || draft.palette != saved.palette || draft.corners != saved.corners;
+                if (changed && !root.save-appearance(draft)) {
                     root.theme-save-failed = true;
                 } else {
-                    root.saved-theme = root.cfg-theme;
+                    root.saved-appearance = draft;
                     root.save-settings();
                     root.screen = root.settings-return;
                 }

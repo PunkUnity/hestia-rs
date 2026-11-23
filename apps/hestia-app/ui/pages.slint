@@ -1348,6 +1348,8 @@ export component SettingsPage inherits Page {
     in-out property <bool> gpu-video;
     in-out property <bool> direct-video;
     in-out property <int> theme;
+    in-out property <int> palette;
+    in-out property <int> corners;
     in property <bool> theme-save-failed;
     in property <bool> android;
     in property <bool> touch-controls;
@@ -1372,13 +1374,16 @@ export component SettingsPage inherits Page {
     property <[string]> scale-names: ["Fit", "Fill", "Stretch"];
     property <[string]> orientation-names: ["Landscape", "Portrait", "Follow the device"];
     property <[string]> speaker-names: ["Stereo", "5.1 surround", "7.1 surround"];
-    property <[string]> theme-names: ["Hearth (dark)", "Daylight (light)", "Midnight (dark)"];
+    in property <[string]> theme-names;
+    in property <[string]> theme-part-names;
     property <int> theme-row: 25;
+    property <int> palette-row: 26;
+    property <int> corners-row: 27;
     property <string> custom-text;
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: Theme (25), 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
+    // order: Appearance (25…27), 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
     // saved profiles (100…), 20…23.
     property <int> nav: -1;
     focus-first => {
@@ -1417,8 +1422,10 @@ export component SettingsPage inherits Page {
         return (i != 8 || root.mediacodec || root.gpu-conversion) && (i != 10 || root.android);
     }
     pure function step(from: int, dir: int) -> int {
-        if (from == root.theme-row) { return dir > 0 ? 0 : root.theme-row; }
-        if (from == 0 && dir < 0) { return root.theme-row; }
+        if (from >= root.theme-row && from <= root.corners-row) {
+            return from == root.corners-row && dir > 0 ? 0 : Math.max(root.theme-row, from + dir);
+        }
+        if (from == 0 && dir < 0) { return root.corners-row; }
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
@@ -1479,6 +1486,10 @@ export component SettingsPage inherits Page {
             root.audio = i;
         } else if (id == root.theme-row) {
             root.theme = i;
+        } else if (id == root.palette-row) {
+            root.palette = i;
+        } else if (id == root.corners-row) {
+            root.corners = i;
         }
     }
 
@@ -1547,7 +1558,7 @@ export component SettingsPage inherits Page {
                     Group {
                         title: "Appearance";
                         ChoiceRow {
-                            label: "Theme";
+                            label: "Base theme";
                             hint: root.theme-save-failed ? "Could not save the theme. Try again." : "Preview a theme, then Save to keep it";
                             options: root.theme-names;
                             index <=> root.theme;
@@ -1561,6 +1572,24 @@ export component SettingsPage inherits Page {
                             open => {
                                 root.sheet = root.theme-row;
                             }
+                        }
+                        ChoiceRow {
+                            label: "Palette";
+                            options: root.theme-part-names;
+                            index <=> root.palette;
+                            want-focus: root.at(root.palette-row);
+                            nav(k) => { return root.move(root.palette-row, k); }
+                            entered => { root.nav = root.palette-row; }
+                            open => { root.sheet = root.palette-row; }
+                        }
+                        ChoiceRow {
+                            label: "Corner style";
+                            options: root.theme-part-names;
+                            index <=> root.corners;
+                            want-focus: root.at(root.corners-row);
+                            nav(k) => { return root.move(root.corners-row, k); }
+                            entered => { root.nav = root.corners-row; }
+                            open => { root.sheet = root.corners-row; }
                         }
                     }
 
@@ -2015,11 +2044,14 @@ export component SettingsPage inherits Page {
     if root.sheet >= 0: OptionSheet {
         width: 100%;
         height: 100%;
-        title: root.sheet == root.theme-row ? "Theme" : root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
+        title: root.sheet == root.theme-row ? "Base theme" : root.sheet == root.palette-row ? "Palette" : root.sheet == root.corners-row ? "Corner style"
+            : root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
             : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : "Speakers";
-        options: root.sheet == root.theme-row ? root.theme-names : root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
+        options: root.sheet == root.theme-row ? root.theme-names : (root.sheet == root.palette-row || root.sheet == root.corners-row) ? root.theme-part-names
+            : root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
             : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
-        current: root.sheet == root.theme-row ? root.theme : root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
+        current: root.sheet == root.theme-row ? root.theme : root.sheet == root.palette-row ? root.palette : root.sheet == root.corners-row ? root.corners
+            : root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
             : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.audio;
         picked(i) => {
             root.choose(root.sheet, i);

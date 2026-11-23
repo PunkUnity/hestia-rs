@@ -1,0 +1,28 @@
+# Appearance and artwork
+
+Hestia's appearance is a per-device choice. A base theme supplies defaults, and each supported component can use its own source. The three built-in themes currently supply a palette and corner style. Choose **From base theme** to make a component follow the selected base again. Changes preview in Settings and apply across the app after Save. Back restores the saved appearance. Existing preferences written as `{"theme":"midnight"}` load as a base choice.
+
+## References
+
+- KDE's Global Theme chooser exposes the components a package actually supplies. The manager applies the selected parts independently, including colors, icons and cursor. Hestia should use the same component-level selection for appearance packs. [KDE chooser](https://github.com/KDE/plasma-workspace/blob/master/kcms/lookandfeel/ui/MoreOptions.qml) · [KDE manager](https://github.com/KDE/plasma-workspace/blob/master/libklookandfeel/klookandfeelmanager.cpp)
+- Heronite Console Mode has typed choices for layout, focus and artwork. Its versioned export bundles the background with the theme. This is a reference for preview, import and sharing across machines with a controller. [Heronite model](https://github.com/RafaelGoulartB/Heronite/blob/55c60a75788dd54cb8586aae7521269633a48151/crates/data/src/console_theme/mod.rs) · [Heronite import and export](https://github.com/RafaelGoulartB/Heronite/blob/55c60a75788dd54cb8586aae7521269633a48151/crates/data/src/console_theme/store.rs)
+- Discord's appearance editor is a reference for direct manipulation of color and gradients. Vencord's open source implementation layers color overrides independently onto a base. Hestia resolves typed color roles that its native controls can consume on every supported platform. [Discord appearance settings](https://support.discord.com/hc/en-us/articles/207260127-How-to-Change-Discord-Color-Themes-and-Customize-Appearance-Settings) · [Vencord color overrides](https://github.com/Vendicated/Vencord/blob/main/src/plugins/clientTheme/utils/styleUtils.ts)
+- Zed's settings choose UI and icon themes independently and store per-theme overrides. This is a reference for stable choices and a builder that exports editable, declarative settings. [Zed settings source](https://github.com/zed-industries/zed/blob/main/crates/settings_content/src/theme.rs) · [Zed theme documentation](https://zed.dev/docs/themes)
+
+## Pack contract
+
+Use a versioned `.hestia-theme` archive with a JSON manifest and referenced assets. Give every pack a stable ID. Each component can publish named variants. The selection stores the pack ID and variant ID for each chosen component, independently of which pack provides the base. Display names and catalogue ordering can change without changing those IDs.
+
+Build a catalogue of validated component contributions on installation or update. Resolve each active component from its explicit selection, from the selected base, then from the built-in default. Preserve stored references to missing contributions so the app can explain the fallback and restore the user's choice if the component returns. Preview a draft selection in memory before persisting it. Deleting an installed pack and updating a partial pack use the same resolution rules.
+
+Keep component definitions typed and independent. Candidate components include semantic colors, app chrome, control geometry and controls such as dropdowns and scrollbars, focus indicators, local pointers, icon sets, typefaces, wallpaper and motion presets. Each component owns the data it can actually render. Linux window-manager decorations, Android system bars and the streamed host cursor are separate from app chrome and the local pointer. Keyboard and D-pad focus remain visible across combinations. Honor reduced motion independently of the selected pack.
+
+Packs are declarative. Validate format version, recognized asset types, paths inside the archive, entry count, decoded dimensions and total unpacked size before installation. Resolve with local installed data and use a staged install before replacing an existing pack. Mobile import can use the Android document picker. A remote-friendly in-app catalogue should also work without a file picker on Google TV.
+
+## Static and animated JPEG XL
+
+JPEG XL is the intended format for animated posters and wallpapers. It can also carry static cover art. Both forms belong to an artwork loader shared by library tiles and theme image components. Preserve frame duration, animation looping, alpha and source color information. Decode away from the UI thread and schedule only visible artwork. Stop or fall back to a static frame for reduced motion or when a themed screen is hidden. Keep image decoding and animation away from the Direct video frame path.
+
+Start with a static JPEG XL decoder and fixture in Hestia RS, then add timed frames with a bounded decoded-frame cache. `jxl-oxide` is a Rust decoder candidate and exposes frame duration. Use test assets with transparency, different delays and a finite loop. Check the decoded size before allocating and test frame timing on Linux, an Android phone and Google TV. [jxl-oxide](https://docs.rs/jxl-oxide/latest/jxl_oxide/) · [Frame duration API](https://docs.rs/jxl-oxide/latest/jxl_oxide/struct.Render.html#method.duration)
+
+Hestia RS currently fetches box art through `appasset` and decodes a single image. For Hermes-hosted artwork, negotiate support for `image/jxl` explicitly and keep the existing image response available for older clients. Keep serving or encoding JPEG XL in Hermes separate from decoding it in Hestia. The artwork format and its color pipeline are independent of SDR/HDR stream negotiation.

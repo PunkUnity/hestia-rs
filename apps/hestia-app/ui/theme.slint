@@ -63,6 +63,7 @@ struct ThemePalette {
 
 export global Theme {
     in-out property <int> selection;
+    in-out property <int> corner-selection;
     // Color roles belong to the palette. Font and control metrics are separate.
     property <ThemePalette> palette: root.selection == 2 ? root.midnight : root.selection == 1 ? root.daylight : root.hearth;
     property <ThemePalette> hearth: {
@@ -160,8 +161,8 @@ export global Theme {
     out property <length> gap: root.compact ? 12px : 18px;
     // Touch targets: 48px on phones.
     out property <length> control-height: root.compact ? 48px : 44px;
-    out property <length> radius: 18px;
-    out property <length> radius-sm: 12px;
+    out property <length> radius: root.corner-selection == 2 ? 12px : root.corner-selection == 1 ? 22px : 18px;
+    out property <length> radius-sm: root.corner-selection == 2 ? 8px : root.corner-selection == 1 ? 15px : 12px;
 
     // Type scale (Outfit)
     out property <length> display-size: root.compact || root.short ? 26px : 32px;
