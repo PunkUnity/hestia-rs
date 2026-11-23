@@ -28,6 +28,10 @@ pub struct VideoTransportStats {
     frames: u64,
     lost_frames: u64,
     dropped_waiting_idr: u64,
+    late_packets: u64,
+    late_frames: u64,
+    late_buckets: [u64; hestia_stream::video::LATE_BUCKETS_MS.len() + 1],
+    late_max_us: u64,
     recovered: u64,
     fec_reports_sent: u64,
     loss_sends: u64,
@@ -51,6 +55,10 @@ impl From<&VideoCounters> for VideoTransportStats {
             frames: video.frames.load(Ordering::Relaxed),
             lost_frames: video.lost_frames.load(Ordering::Relaxed),
             dropped_waiting_idr: video.dropped_waiting_idr.load(Ordering::Relaxed),
+            late_packets: video.late_packets.load(Ordering::Relaxed),
+            late_frames: video.late_frames.load(Ordering::Relaxed),
+            late_buckets: std::array::from_fn(|i| video.late_buckets[i].load(Ordering::Relaxed)),
+            late_max_us: video.late_max_us.load(Ordering::Relaxed),
             recovered: video.recovered.load(Ordering::Relaxed),
             fec_reports_sent: video.fec_reports_sent.load(Ordering::Relaxed),
             loss_sends: recovery.loss_sends.load(Ordering::Relaxed),
@@ -228,6 +236,8 @@ impl StreamReport {
             ("complete frames assembled", video.frames + video.dropped_waiting_idr),
             ("frames forwarded to decoder", video.frames),
             ("frames lost during assembly", video.lost_frames),
+            ("lost frames whose packets still arrived", video.late_frames),
+            ("packets arriving after their frame was lost", video.late_packets),
             ("complete frames skipped waiting for IDR", video.dropped_waiting_idr),
             ("packets recovered by FEC", video.recovered),
             ("FEC block reports sent to host", video.fec_reports_sent),
@@ -240,6 +250,23 @@ impl StreamReport {
         ];
         for (label, value) in values {
             self.field("Video transport and recovery", label, value);
+        }
+        if video.late_packets > 0 {
+            let limits = hestia_stream::video::LATE_BUCKETS_MS;
+            let mut parts: Vec<String> = Vec::new();
+            for (i, count) in video.late_buckets.iter().enumerate() {
+                let label = match i {
+                    0 => format!("<{} ms", limits[0]),
+                    i if i < limits.len() => format!("{}-{} ms", limits[i - 1], limits[i]),
+                    _ => format!(">={} ms", limits[limits.len() - 1]),
+                };
+                parts.push(format!("{label}: {count}"));
+            }
+            self.field(
+                "Video transport and recovery",
+                "late packets by time after their frame was lost",
+                format!("{} (max {:.2} ms)", parts.join(", "), video.late_max_us as f64 / 1000.0),
+            );
         }
         if video.loss_sends > 0 {
             let mean = video.loss_to_send_us as f64 / video.loss_sends as f64 / 1000.0;

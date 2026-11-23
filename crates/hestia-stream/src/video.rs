@@ -103,6 +103,27 @@ pub struct AssemblerStats {
     pub recovered_packets: u64,
     pub lost_frames: u64,
     pub dropped_waiting_idr: u64,
+    /// Packets that arrived for a frame already given up on (marked lost).
+    pub late_packets: u64,
+    /// Distinct lost frames that received at least one such late packet:
+    /// frames declared lost although their data was still on the way.
+    pub late_frames: u64,
+    /// How late those packets were after the frame was given up on, in
+    /// [`LATE_BUCKETS_MS`] buckets (the last one is everything later).
+    pub late_buckets: [u64; LATE_BUCKETS_MS.len() + 1],
+    pub late_max_us: u64,
+}
+
+/// Upper bounds of the lateness buckets in [`AssemblerStats::late_buckets`].
+pub const LATE_BUCKETS_MS: [u64; 5] = [10, 25, 50, 100, 250];
+/// How many recently lost frames are remembered for late-arrival accounting.
+const LATE_TRACKED_FRAMES: usize = 256;
+
+/// A frame given up on, remembered to count packets that still arrive.
+struct ExpiredFrame {
+    number: u32,
+    at: Instant,
+    late: bool,
 }
 
 /// Sunshine's SS_FRAME_FEC_STATUS, packed in network byte order.
@@ -208,6 +229,8 @@ pub struct FrameAssembler {
     next_frame: Option<u32>,
     pending: Vec<FrameState>,
     waiting_for_idr: bool,
+    /// Recently lost frames, oldest first (late-arrival accounting only).
+    expired: std::collections::VecDeque<ExpiredFrame>,
     pub stats: AssemblerStats,
 }
 
@@ -229,6 +252,7 @@ impl FrameAssembler {
             pending: Vec::with_capacity(MAX_FRAME_LOOKAHEAD as usize + 2),
             report_fec: false,
             waiting_for_idr: true,
+            expired: std::collections::VecDeque::with_capacity(LATE_TRACKED_FRAMES),
             stats: AssemblerStats::default(),
         }
     }
@@ -268,6 +292,7 @@ impl FrameAssembler {
         let mut out = self.expire(now);
         let next = *self.next_frame.get_or_insert(info.frame);
         if frame_before(info.frame, next) {
+            self.note_late(info.frame, now);
             return out;
         }
         let index = self
@@ -362,6 +387,7 @@ impl FrameAssembler {
             }
             let skipped = if number == next {
                 let expired = self.pending.remove(0);
+                self.remember_expired(number, now);
                 if self.report_fec {
                     for block in expired
                         .blocks
@@ -374,11 +400,50 @@ impl FrameAssembler {
                 }
                 1
             } else {
-                number.wrapping_sub(next)
+                let skipped = number.wrapping_sub(next);
+                // Frames with no packet yet: remember them too, a packet may
+                // still arrive. Only the most recent ones fit.
+                let first = skipped.saturating_sub(LATE_TRACKED_FRAMES as u32);
+                for offset in first..skipped {
+                    self.remember_expired(next.wrapping_add(offset), now);
+                }
+                skipped
             };
             self.next_frame = Some(next.wrapping_add(skipped));
             self.mark_lost(skipped, out);
         }
+    }
+
+    fn remember_expired(&mut self, number: u32, at: Instant) {
+        if self.expired.len() == LATE_TRACKED_FRAMES {
+            self.expired.pop_front();
+        }
+        self.expired.push_back(ExpiredFrame {
+            number,
+            at,
+            late: false,
+        });
+    }
+
+    /// A packet for a frame before the next expected one: count it when that
+    /// frame was given up on (duplicates of delivered frames are ignored).
+    fn note_late(&mut self, number: u32, now: Instant) {
+        let Some(frame) = self.expired.iter_mut().rev().find(|f| f.number == number) else {
+            return;
+        };
+        let late = now.saturating_duration_since(frame.at);
+        self.stats.late_packets += 1;
+        if !frame.late {
+            frame.late = true;
+            self.stats.late_frames += 1;
+        }
+        let ms = late.as_millis() as u64;
+        let bucket = LATE_BUCKETS_MS
+            .iter()
+            .position(|&limit| ms < limit)
+            .unwrap_or(LATE_BUCKETS_MS.len());
+        self.stats.late_buckets[bucket] += 1;
+        self.stats.late_max_us = self.stats.late_max_us.max(late.as_micros() as u64);
     }
 
     fn mark_lost(&mut self, count: u32, out: &mut Vec<AssemblerOutput>) {
@@ -545,6 +610,11 @@ pub struct VideoCounters {
     pub recovered: AtomicU64,
     pub lost_frames: AtomicU64,
     pub dropped_waiting_idr: AtomicU64,
+    /// See [`AssemblerStats::late_packets`] and the fields after it.
+    pub late_packets: AtomicU64,
+    pub late_frames: AtomicU64,
+    pub late_buckets: [AtomicU64; LATE_BUCKETS_MS.len() + 1],
+    pub late_max_us: AtomicU64,
     pub recovery: VideoRecoveryCounters,
     /// Sum of host-reported processing latency, and how many frames had it.
     pub host_latency_us: AtomicU64,
@@ -956,6 +1026,18 @@ fn receive_loop(
         counters
             .dropped_waiting_idr
             .store(assembler.stats.dropped_waiting_idr, Ordering::Relaxed);
+        counters
+            .late_packets
+            .store(assembler.stats.late_packets, Ordering::Relaxed);
+        counters
+            .late_frames
+            .store(assembler.stats.late_frames, Ordering::Relaxed);
+        for (counter, value) in counters.late_buckets.iter().zip(assembler.stats.late_buckets) {
+            counter.store(value, Ordering::Relaxed);
+        }
+        counters
+            .late_max_us
+            .store(assembler.stats.late_max_us, Ordering::Relaxed);
     }
     stop.store(true, Ordering::Relaxed);
     sink.cleanup();
@@ -1205,6 +1287,114 @@ mod tests {
         assert_eq!(asm.stats.dropped_waiting_idr, 1);
         let out = feed(&mut asm, 4, true, 0);
         assert!(matches!(&out[..], [AssemblerOutput::Frame(f)] if f.keyframe && f.frame == 4));
+    }
+
+    #[test]
+    fn counts_packets_that_arrive_after_their_frame_was_lost() {
+        let mut asm = FrameAssembler::new(PACKET_SIZE as u32, VideoCodec::H264);
+        let start = Instant::now();
+        let ms = |n: u64| start + Duration::from_millis(n);
+        let mut seq = 0u16;
+        let mut frame = |number: u32, idr: bool| {
+            let packets = packetize(number, &h264_frame(4000, idr), PACKET_SIZE, 20, seq, idr);
+            seq = seq.wrapping_add(packets.len() as u16);
+            packets
+        };
+        let (f1, f2, f3) = (frame(1, true), frame(2, false), frame(3, false));
+        for p in &f1 {
+            asm.add_at(p, ms(0));
+        }
+        // Frame 2 starts, frame 3 arrives whole; frame 2 is given up on.
+        asm.add_at(&f2[0], ms(16));
+        for p in &f3 {
+            asm.add_at(p, ms(32));
+        }
+        asm.expire(ms(32) + REORDER_WINDOW);
+        assert_eq!(asm.stats.lost_frames, 1);
+        // The rest of frame 2 arrives 22 ms after it was given up on.
+        for p in &f2[1..] {
+            asm.add_at(p, ms(60));
+        }
+        assert_eq!(asm.stats.late_frames, 1);
+        assert_eq!(asm.stats.late_packets, (f2.len() - 1) as u64);
+        assert_eq!(asm.stats.late_buckets[1], (f2.len() - 1) as u64, "10-25 ms");
+        assert_eq!(asm.stats.late_max_us, 22_000);
+        // A duplicate of a delivered frame isn't a late arrival.
+        asm.add_at(&f1[0], ms(70));
+        assert_eq!(asm.stats.late_packets, (f2.len() - 1) as u64);
+    }
+
+    #[test]
+    fn counts_frames_skipped_before_any_packet_arrived() {
+        let mut asm = FrameAssembler::new(PACKET_SIZE as u32, VideoCodec::H264);
+        let start = Instant::now();
+        let mut seq = 0u16;
+        let mut packets = Vec::new();
+        for number in 1..=6u32 {
+            let p = packetize(number, &h264_frame(800, number == 1), PACKET_SIZE, 20, seq, number == 1);
+            seq = seq.wrapping_add(p.len() as u16);
+            packets.push(p);
+        }
+        for p in &packets[0] {
+            asm.add_at(p, start);
+        }
+        // Frames 3-6 arrive before anything of frame 2: more than
+        // MAX_FRAME_LOOKAHEAD ahead, so frame 2 is lost at once.
+        for frame in &packets[2..] {
+            for p in frame {
+                asm.add_at(p, start + Duration::from_millis(1));
+            }
+        }
+        assert_eq!(asm.stats.lost_frames, 1);
+        for p in &packets[1] {
+            asm.add_at(p, start + Duration::from_millis(8));
+        }
+        assert_eq!(asm.stats.late_frames, 1);
+        assert_eq!(asm.stats.late_buckets[0], packets[1].len() as u64, "<10 ms");
+    }
+
+    /// A replay of a jittery link with **no packet loss at all**: 120 frames
+    /// at 60 fps, every packet delayed by a deterministic 0-30 ms, delivered
+    /// in arrival order. With the current 6 ms window, frames whose packets
+    /// are all still coming are declared lost, and every one of them later
+    /// shows up in the late-arrival counts.
+    #[test]
+    fn jittery_link_without_loss_replay_under_the_current_window() {
+        let mut asm = FrameAssembler::new(PACKET_SIZE as u32, VideoCodec::H264);
+        let start = Instant::now();
+        let mut rng = 0x2545_f491_u32;
+        let mut jitter_us = || {
+            rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            u64::from(rng >> 8) % 30_000
+        };
+        let mut seq = 0u16;
+        let mut arrivals = Vec::new();
+        for number in 1..=120u32 {
+            let idr = number == 1;
+            let packets = packetize(number, &h264_frame(6000, idr), PACKET_SIZE, 20, seq, idr);
+            seq = seq.wrapping_add(packets.len() as u16);
+            let sent_us = u64::from(number) * 16_667;
+            for p in packets {
+                arrivals.push((sent_us + jitter_us(), p));
+            }
+        }
+        arrivals.sort_by_key(|(at, _)| *at);
+        let mut delivered = 0;
+        for (at, p) in &arrivals {
+            for o in asm.add_at(p, start + Duration::from_micros(*at)) {
+                delivered += usize::from(matches!(o, AssemblerOutput::Frame(_)));
+            }
+        }
+        asm.expire(start + Duration::from_secs(5));
+        let s = asm.stats;
+        assert!(s.lost_frames > 0, "the 6 ms window loses frames on this replay: {s:?}");
+        assert_eq!(
+            s.late_frames, s.lost_frames,
+            "every lost frame's packets still arrived: {s:?}"
+        );
+        assert!(s.late_packets >= s.late_frames);
+        assert_eq!(delivered as u64, s.frames);
+        assert_eq!(s.frames + s.dropped_waiting_idr + s.lost_frames, 120);
     }
 
     #[test]
