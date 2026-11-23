@@ -180,7 +180,7 @@ impl DirectVideoStats {
         }
     }
 
-    pub(crate) fn callback(&self, id: usize, pts: i64, render_ns: i64, arrival_ns: Option<i64>) {
+    pub(crate) fn callback(&self, id: usize, pts: i64, render_ns: i64, arrival: Instant) {
         let mut s = self.lock();
         if s.codec != Some(id) || !s.callbacks {
             return;
@@ -189,15 +189,14 @@ impl DirectVideoStats {
             s.unmatched += 1;
             return;
         };
-        s.pending.remove(index);
+        let (_, release) = s.pending.remove(index).expect("matched pending release");
         s.matched += 1;
+        // The codec timestamp can have a different origin on some devices.
+        // Use the app clock for release-to-callback and the codec clock only
+        // for differences between consecutive render timestamps.
+        s.callback_delay.record(arrival.saturating_duration_since(release));
         if render_ns <= 0 {
             return;
-        }
-        if let Some(arrival_ns) = arrival_ns
-            && let Some(delay) = arrival_ns.checked_sub(render_ns).filter(|&ns| ns >= 0)
-        {
-            s.callback_delay.record(Duration::from_nanos(delay as u64));
         }
         if let Some(previous) = s.last_render_ns {
             // An older timestamp can be delivered after a newer one. Keep
@@ -262,7 +261,7 @@ impl DirectVideoStats {
                 ));
             }
             if let Some(delay) = s.callback_delay.summary() {
-                rows.push(("codec render timestamp to callback arrival", delay));
+                rows.push(("visible buffer release to callback arrival", delay));
             }
         } else {
             rows.push(("render callbacks", "unavailable".to_owned()));
@@ -295,11 +294,20 @@ mod tests {
                 .contains(&("awaiting callback", "3".into()))
         );
         for pts in 0..3 {
-            stats.callback(1, pts, 1_000_000_000 + pts * 16_666_667, Some(2_000_000_000));
+            stats.callback(
+                1,
+                pts,
+                1_000_000_000 + pts * 16_666_667,
+                now + Duration::from_millis(20),
+            );
         }
         let s = stats.lock();
         assert_eq!((s.released, s.matched, s.failed, s.hidden), (3, 3, 1, 1));
         assert_eq!(s.interval_count, 2);
+        assert_eq!(
+            s.callback_delay.summary().as_deref(),
+            Some("p50 20.00 / p95 20.00 / p99 20.00 ms (3 samples)")
+        );
         assert!(s.pending.is_empty());
         drop(s);
         stats.discard_older(1, true);
@@ -332,12 +340,12 @@ mod tests {
         stats.expect_callback(1, 7, now);
         stats.output(1, now);
         stats.surface_changed(1, now + Duration::from_secs(1));
-        stats.callback(1, 7, 100, None);
+        stats.callback(1, 7, 100, now);
         stats.begin_codec(2, 60, now);
         stats.enable_callbacks(2);
         stats.expect_callback(2, 7, now);
-        stats.callback(1, 7, 200, None);
-        stats.callback(2, 7, 300, None);
+        stats.callback(1, 7, 200, now);
+        stats.callback(2, 7, 300, now);
         let s = stats.lock();
         assert_eq!((s.retired, s.unmatched, s.matched, s.interval_count), (1, 1, 1, 0));
         assert!(s.worst_output_gap.is_zero());
@@ -351,10 +359,10 @@ mod tests {
         stats.enable_callbacks(1);
         for pts in 0..=65_536 {
             stats.expect_callback(1, pts, now);
-            stats.callback(1, pts, 1_000_000_000 + pts * 8_333_333, None);
+            stats.callback(1, pts, 1_000_000_000 + pts * 8_333_333, now);
         }
         stats.expect_callback(1, 65_537, now);
-        stats.callback(1, 65_537, 3_000_000_000 + 65_536 * 8_333_333, None);
+        stats.callback(1, 65_537, 3_000_000_000 + 65_536 * 8_333_333, now);
         for pts in 100_000..100_000 + MAX_PENDING as i64 + 1 {
             stats.expect_callback(1, pts, now);
         }

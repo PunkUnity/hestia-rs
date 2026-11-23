@@ -147,17 +147,6 @@ impl Drop for Measurement {
     }
 }
 
-fn monotonic_ns() -> Option<i64> {
-    let mut ts = std::mem::MaybeUninit::<libc::timespec>::uninit();
-    // SAFETY: clock_gettime initializes the timespec when it returns 0.
-    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    // SAFETY: clock_gettime returned success.
-    let ts = unsafe { ts.assume_init() };
-    i64::try_from(i128::from(ts.tv_sec) * 1_000_000_000 + i128::from(ts.tv_nsec)).ok()
-}
-
 type SetCallback = unsafe extern "C" fn(
     *mut ndk_sys::AMediaCodec,
     ndk_sys::AMediaCodecOnFrameRendered,
@@ -170,7 +159,7 @@ unsafe extern "C" fn on_frame_rendered(
     media_time_us: i64,
     system_ns: i64,
 ) {
-    let arrival_ns = monotonic_ns();
+    let arrival = Instant::now();
     let id = userdata as usize;
     let stats = CALLBACKS
         .lock()
@@ -178,7 +167,7 @@ unsafe extern "C" fn on_frame_rendered(
         .get(&id)
         .and_then(Weak::upgrade);
     if let Some(stats) = stats {
-        stats.direct_video.callback(id, media_time_us, system_ns, arrival_ns);
+        stats.direct_video.callback(id, media_time_us, system_ns, arrival);
     }
 }
 
