@@ -7,6 +7,8 @@
 const MIN_FRAMES_TO_JUDGE: f64 = 10.0;
 /// Drop percentage above which loss is a real problem.
 const DROP_PERCENT_THRESHOLD: f64 = 2.0;
+const HIGH_RTT_MS: u32 = 250;
+const SLOW_ARRIVAL_FRACTION: f64 = 0.8;
 /// Host processing latency considered high.
 const HOST_LATENCY_HIGH_MS: f64 = 30.0;
 
@@ -28,7 +30,7 @@ impl Bottleneck {
             Self::WaitingForIdr => "waiting for IDR",
             Self::Network => "network",
             Self::Decode => "decode",
-            Self::Render => "display",
+            Self::Render => "client frame drops",
             Self::Host => "host",
         }
     }
@@ -46,6 +48,7 @@ pub struct Window {
     pub decode_ms: f64,
     /// Frames lost on the network, as a share of all frames.
     pub network_drop_pct: f64,
+    pub rtt_ms: u32,
     /// Decoded frames superseded by a newer one before release or draw.
     pub display_drop_pct: f64,
     /// Average host processing latency, when the host reports it.
@@ -91,7 +94,22 @@ fn classify(w: &Window, sustained_deficit: bool) -> Diagnosis {
             key_metric: format!("0 of {:.0} fps decoded", w.received_fps),
         };
     }
-    if w.decoded_fps < MIN_FRAMES_TO_JUDGE && !sustained_deficit {
+    let assembled_fps = w.received_fps + w.skipped_waiting_idr_fps;
+    if w.rtt_ms >= HIGH_RTT_MS
+        && w.network_drop_pct < DROP_PERCENT_THRESHOLD
+        && assembled_fps < f64::from(w.target_fps) * SLOW_ARRIVAL_FRACTION
+        && w.host_ms.unwrap_or(0.0) < HOST_LATENCY_HIGH_MS
+    {
+        return Diagnosis {
+            bottleneck: Bottleneck::Network,
+            summary: "Network latency is high while video arrivals have slowed.",
+            key_metric: format!(
+                "RTT {} ms, {assembled_fps:.0} of {} fps assembled",
+                w.rtt_ms, w.target_fps
+            ),
+        };
+    }
+    if w.decoded_fps < MIN_FRAMES_TO_JUDGE && !sustained_deficit && w.network_drop_pct < DROP_PERCENT_THRESHOLD {
         return Diagnosis::default();
     }
     let budget_ms = 1000.0 / f64::from(if w.target_fps > 0 { w.target_fps } else { 60 });
@@ -237,6 +255,7 @@ mod tests {
             decode_ms: 3.0,
             skipped_waiting_idr_fps: 0.0,
             network_drop_pct: 0.0,
+            rtt_ms: 0,
             display_drop_pct: 0.0,
             host_ms: Some(4.0),
         }
@@ -324,6 +343,35 @@ mod tests {
             ..healthy()
         });
         assert_eq!(both.bottleneck, Bottleneck::Render);
+    }
+
+    #[test]
+    fn high_rtt_and_slow_arrivals_are_reported_even_with_client_drops() {
+        let run = Window {
+            target_fps: 30,
+            received_fps: 9.0,
+            decoded_fps: 9.0,
+            rtt_ms: 1859,
+            display_drop_pct: 11.0,
+            ..healthy()
+        };
+        let verdict = diagnose(&run);
+        assert_eq!(verdict.bottleneck, Bottleneck::Network);
+        assert_eq!(verdict.key_metric, "RTT 1859 ms, 9 of 30 fps assembled");
+
+        let full_rate = Window {
+            received_fps: 30.0,
+            decoded_fps: 30.0,
+            ..run
+        };
+        assert_eq!(diagnose(&full_rate).bottleneck, Bottleneck::Render);
+        let waiting = Window {
+            received_fps: 0.0,
+            decoded_fps: 0.0,
+            skipped_waiting_idr_fps: 9.0,
+            ..run
+        };
+        assert_eq!(diagnose(&waiting).bottleneck, Bottleneck::WaitingForIdr);
     }
 
     #[test]

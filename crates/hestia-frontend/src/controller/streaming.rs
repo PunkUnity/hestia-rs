@@ -28,6 +28,7 @@ pub(super) struct ActiveStream {
     generation: u64,
     out: Output,
     host_id: String,
+    hermes: bool,
     input: StreamInput,
     report: SharedReport,
     decode: Arc<DecodeStats>,
@@ -120,6 +121,7 @@ struct Totals {
     decoder_dropped: u64,
     superseded: u64,
     direct_superseded: u64,
+    direct_outputs: Option<u64>,
     direct_releases: Option<u64>,
 }
 
@@ -187,6 +189,8 @@ impl Listener {
     /// Per-second rates from the running totals, with the bottleneck
     /// verdict for that second.
     fn sample(&self, stats: StreamStats) -> Option<(StatsSample, diagnosis::Diagnosis)> {
+        #[cfg(target_os = "android")]
+        let direct = self.decode.direct_video.counts();
         let now = Totals {
             at: Instant::now(),
             stats,
@@ -195,11 +199,15 @@ impl Listener {
             decoder_dropped: self.decode.dropped.load(Ordering::Relaxed),
             superseded: self.present.superseded(),
             #[cfg(target_os = "android")]
-            direct_superseded: self.decode.direct_video.superseded(),
+            direct_superseded: direct.discarded,
             #[cfg(not(target_os = "android"))]
             direct_superseded: 0,
             #[cfg(target_os = "android")]
-            direct_releases: self.decode.direct_video.visible_releases(),
+            direct_outputs: direct.visible_outputs,
+            #[cfg(not(target_os = "android"))]
+            direct_outputs: None,
+            #[cfg(target_os = "android")]
+            direct_releases: direct.visible_releases,
             #[cfg(not(target_os = "android"))]
             direct_releases: None,
         };
@@ -210,7 +218,11 @@ impl Listener {
         let received = delta(now.stats.frames, prev.stats.frames);
         let skipped = delta(now.stats.dropped_waiting_idr, prev.stats.dropped_waiting_idr);
         let lost = delta(now.stats.lost_frames, prev.stats.lost_frames);
-        let decoded = delta(now.decoded, prev.decoded);
+        let handoffs = delta(now.decoded, prev.decoded);
+        let direct_decoded = now
+            .direct_outputs
+            .zip(prev.direct_outputs)
+            .map(|(now, prev)| delta(now, prev));
         let direct_superseded = delta(now.direct_superseded, prev.direct_superseded);
         let superseded = delta(now.superseded, prev.superseded) + direct_superseded;
         let host_frames = delta(now.stats.host_latency_frames, prev.stats.host_latency_frames);
@@ -226,18 +238,17 @@ impl Listener {
         let window = diagnosis::Window {
             target_fps: self.target_fps,
             received_fps: received as f64 / secs,
-            decoded_fps: decoded as f64 / secs,
-            decode_ms: if decoded == 0 {
+            decoded_fps: direct_decoded.unwrap_or(handoffs) as f64 / secs,
+            decode_ms: if handoffs == 0 {
                 0.0
             } else {
-                delta(now.decode_us, prev.decode_us) as f64 / decoded as f64 / 1000.0
+                delta(now.decode_us, prev.decode_us) as f64 / handoffs as f64 / 1000.0
             },
             skipped_waiting_idr_fps: skipped as f64 / secs,
             network_drop_pct: percent(lost, received + skipped + lost),
-            // Explicit replacements only. MediaCodec's asynchronous render
-            // notifications are not a drop signal. Direct replacements never
-            // reached the presenter, so include them in the denominator.
-            display_drop_pct: percent(superseded, decoded + direct_superseded),
+            rtt_ms: now.stats.rtt_ms,
+            // Direct output includes frames that were never handed off.
+            display_drop_pct: percent(superseded, direct_decoded.unwrap_or(handoffs + direct_superseded)),
             host_ms,
         };
         let verdict = self.diagnosis.lock().unwrap_or_else(|p| p.into_inner()).sample(&window);
@@ -273,7 +284,7 @@ impl Listener {
             None => format!("{:.0} fps", s.decoded_fps.unwrap_or(s.fps)),
         };
         let mut line = format!(
-            "{}  ·  {rates}  ·  {:.1} Mbps  ·  RTT {} ms  ·  decode {:.1} ms{}  ·  FEC {}  ·  lost {}  ·  dropped {}",
+            "{}  ·  {rates}  ·  {:.1} Mbps  ·  RTT {} ms  ·  decode {:.1} ms{}  ·  FEC {}  ·  lost {}  ·  IDR skips {}  ·  client drops {}",
             self.label,
             s.mbps,
             s.rtt_ms,
@@ -281,6 +292,7 @@ impl Listener {
             s.host_ms.map(|h| format!("  ·  host {h:.1} ms")).unwrap_or_default(),
             s.fec_recovered,
             s.lost_frames,
+            s.dropped_waiting_idr,
             s.dropped.unwrap_or(0),
         );
         let mut spikes = self.spikes.lock().unwrap_or_else(|p| p.into_inner());
@@ -496,6 +508,7 @@ impl Controller {
                 held: Mutex::new(Held::default()),
             },
             host_id,
+            hermes: listener.hermes,
             input,
             report: session_report,
             decode,
@@ -1142,7 +1155,7 @@ impl Controller {
     /// Text and deletions from the on-screen keyboard, typed on the host.
     pub(super) fn stream_ime(self: &Shared, event: ImeEvent) {
         if let Some(active) = self.active_stream().as_ref() {
-            stream_input::ime(event, |event| active.out.send(&event));
+            stream_input::ime(event, active.hermes, |event| active.out.send(&event));
         }
     }
 

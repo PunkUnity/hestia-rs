@@ -247,6 +247,7 @@ pub fn run(client: &HestiaClient, host_id: &str, opts: Options) -> Result<()> {
                         },
                         decode_ms: decode_stats.as_ref().map_or(0.0, |d| d.mean_decode_ms()),
                         skipped_waiting_idr_fps: skipped as f64 / secs,
+                        rtt_ms: stats.rtt_ms,
                         network_drop_pct: if received + skipped + lost == 0 {
                             0.0
                         } else {

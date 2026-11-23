@@ -29,7 +29,14 @@ use crate::native_picture::NativePicture;
 use crate::{EncodedFrame, VideoFormat};
 
 /// Bound time spent feeding one frame when the codec is under pressure.
-const INPUT_WAIT: Duration = Duration::from_millis(20);
+///
+/// After a network stall, frames arrive in a burst and the codec can stay
+/// busy for longer than one frame. Giving up throws away a good frame, and
+/// the reference chain with it, so the stream waits for a keyframe, which
+/// takes a round trip or more on a slow link. Wait instead, while releasing
+/// output, and give up only when the codec looks stuck (well under
+/// `OUTPUT_STALL`, which switches outputs).
+const INPUT_WAIT: Duration = Duration::from_millis(500);
 const INPUT_RETRY: Duration = Duration::from_millis(4);
 const OUTPUT_POLL: Duration = Duration::from_millis(2);
 const SLOW_OUTPUT_POLL: Duration = Duration::from_millis(8);
@@ -63,6 +70,12 @@ enum Output {
     Images,
     /// The codec's own output buffers.
     Buffers,
+}
+
+enum DirectSurface {
+    Ready,
+    Hidden,
+    Replaced,
 }
 
 fn mime(codec: VideoCodec) -> Option<&'static str> {
@@ -395,6 +408,51 @@ impl MediaCodecDecoder {
 }
 
 impl Running {
+    fn flush(&mut self) -> Result<(), String> {
+        self.codec
+            .flush()
+            .map_err(|e| format!("could not flush decoder: {e:?}"))?;
+        if let Some(measurement) = &self.direct_measurement {
+            measurement.codec_flushed();
+        }
+        // Keep timestamps monotonic across resets so an image already handed
+        // to the reader cannot be mistaken for an output from the new IDR.
+        self.pending.clear();
+        self.rendered.clear();
+        Ok(())
+    }
+
+    fn sync_direct_surface(&mut self) -> Result<DirectSurface, String> {
+        let Some((have, current)) = &self.direct else {
+            return Ok(DirectSurface::Ready);
+        };
+        let (generation, window) = crate::direct_video::current();
+        if *have == generation {
+            return Ok(if current.is_some() {
+                DirectSurface::Ready
+            } else {
+                DirectSurface::Hidden
+            });
+        }
+        if let Some(measurement) = &self.direct_measurement {
+            measurement.surface_changed();
+        }
+        let Some(window) = window else {
+            // A destroyed SurfaceView can leave the codec's output blocked.
+            // Stop feeding it until there is a window to bind.
+            self.direct = Some((generation, None));
+            self.pending.clear();
+            return Ok(DirectSurface::Hidden);
+        };
+        self.codec
+            .set_output_surface(&window)
+            .map_err(|e| format!("direct video surface: {e:?}"))?;
+        self.flush()?;
+        self.direct = Some((generation, Some(window)));
+        info!("direct video: following the new surface");
+        Ok(DirectSurface::Replaced)
+    }
+
     /// Queues one access unit; false when the codec had no free input buffer.
     fn feed(&mut self, data: &[u8], mut timing: FrameTiming, wait: Duration) -> Result<bool, String> {
         let mut input = match self.codec.dequeue_input_buffer(wait) {
@@ -564,30 +622,16 @@ impl Running {
 
     /// Direct output: the newest decoded picture goes to the surface now and
     /// the system shows it at the next refresh; older ones finished in the
-    /// same pass are skipped (never shown out of order). While the surface
-    /// is gone (app in the background) pictures are dropped.
+    /// same pass are skipped (never shown out of order).
     fn drain_direct(
         &mut self,
         out: &mut DecodedFrame,
         stats: Option<&DecodeStats>,
     ) -> Result<Option<FrameTiming>, String> {
-        let (generation, window) = crate::direct_video::current();
-        if let Some((have, current)) = &mut self.direct
-            && *have != generation
-        {
-            if let Some(measurement) = &self.direct_measurement {
-                measurement.surface_changed();
-            }
-            if let Some(window) = &window {
-                self.codec
-                    .set_output_surface(window)
-                    .map_err(|e| format!("direct video surface: {e:?}"))?;
-                info!("direct video: following the new surface");
-            }
-            *have = generation;
-            *current = window;
-        }
-        let visible = self.direct.as_ref().is_some_and(|(_, window)| window.is_some());
+        let visible = self
+            .direct
+            .as_ref()
+            .is_some_and(|(generation, window)| window.is_some() && crate::direct_video::is_current(*generation));
         let mut newest = None;
         loop {
             match self.codec.dequeue_output_buffer(Duration::ZERO) {
@@ -823,7 +867,12 @@ impl FrameDecoder for MediaCodecDecoder {
         let Some(running) = self.running.as_mut() else {
             return Ok(None);
         };
-        let result = running.poll_picture(out, self.colorimetry, self.stats.as_deref());
+        let result = match running.sync_direct_surface() {
+            Ok(DirectSurface::Hidden) => return Ok(None),
+            Ok(DirectSurface::Replaced) => return Err("direct video surface replaced; waiting for a keyframe".into()),
+            Ok(DirectSurface::Ready) => running.poll_picture(out, self.colorimetry, self.stats.as_deref()),
+            Err(e) => Err(e),
+        };
         self.observe_output(result, false)
     }
 
@@ -833,16 +882,13 @@ impl FrameDecoder for MediaCodecDecoder {
             return software.reset();
         }
         let running = self.running.as_mut().ok_or("decoder not configured")?;
-        if let Err(e) = running.codec.flush() {
-            return self.fall_back(&format!("could not flush decoder: {e:?}"));
+        match running.sync_direct_surface().and_then(|surface| match surface {
+            DirectSurface::Ready => running.flush(),
+            DirectSurface::Hidden | DirectSurface::Replaced => Ok(()),
+        }) {
+            Ok(()) => {}
+            Err(e) => return self.fall_back(&e),
         }
-        if let Some(measurement) = &running.direct_measurement {
-            measurement.codec_flushed();
-        }
-        // Keep timestamps monotonic across resets so an image already handed
-        // to the reader cannot be mistaken for an output from the new IDR.
-        running.pending.clear();
-        running.rendered.clear();
         self.last_output = None;
         self.last_input = None;
         Ok(())
@@ -862,6 +908,21 @@ impl FrameDecoder for MediaCodecDecoder {
             return Err(fatal.clone());
         }
         self.check_renderer()?;
+        if let Some(running) = &mut self.running {
+            match running.sync_direct_surface() {
+                Ok(DirectSurface::Hidden) => {
+                    self.last_input = None;
+                    self.last_output = None;
+                    self.failures = 0;
+                    return Ok(None);
+                }
+                Ok(DirectSurface::Replaced) if !frame.keyframe => {
+                    return Err("direct video surface replaced; waiting for a keyframe".into());
+                }
+                Ok(_) => {}
+                Err(e) => return self.observe_output(Err(e), true),
+            }
+        }
         let now = Instant::now();
         if self
             .last_input

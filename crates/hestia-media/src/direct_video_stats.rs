@@ -16,6 +16,13 @@ const CALLBACK_GRACE: Duration = Duration::from_secs(5);
 #[derive(Debug, Default)]
 pub struct DirectVideoStats(Mutex<State>);
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DirectVideoCounts {
+    pub visible_outputs: Option<u64>,
+    pub visible_releases: Option<u64>,
+    pub discarded: u64,
+}
+
 #[derive(Debug, Default)]
 struct State {
     codec: Option<usize>,
@@ -24,6 +31,7 @@ struct State {
     ever_measured: bool,
     period_ns: u64,
     pending: VecDeque<(i64, Instant)>,
+    outputs: u64,
     released: u64,
     tracked: u64,
     discarded: u64,
@@ -128,6 +136,7 @@ impl DirectVideoStats {
     pub(crate) fn output(&self, id: usize, now: Instant) {
         let mut s = self.lock();
         if s.codec == Some(id) {
+            s.outputs += 1;
             s.observe_output_gap(now);
             s.last_output = Some(now);
         }
@@ -214,15 +223,15 @@ impl DirectVideoStats {
         s.last_render_ns = Some(render_ns);
     }
 
-    /// Explicitly replaced pictures while the surface was visible. Callback
-    /// accounting is deliberately excluded from the live drop estimate.
-    pub fn superseded(&self) -> u64 {
-        self.lock().discarded
-    }
-
-    pub fn visible_releases(&self) -> Option<u64> {
-        let state = self.lock();
-        state.codec.map(|_| state.released)
+    /// Snapshot decoder outputs, releases, and explicit discards together.
+    /// Render callbacks do not determine the discard count.
+    pub fn counts(&self) -> DirectVideoCounts {
+        let s = self.lock();
+        DirectVideoCounts {
+            visible_outputs: s.codec.map(|_| s.outputs),
+            visible_releases: s.codec.map(|_| s.released),
+            discarded: s.discarded,
+        }
     }
 
     pub fn report(&self, now: Instant) -> Vec<(&'static str, String)> {
@@ -233,6 +242,7 @@ impl DirectVideoStats {
         s.expire(now);
         s.observe_output_gap(now);
         let mut rows = vec![
+            ("visible decoder outputs", s.outputs.to_string()),
             ("visible releases", s.released.to_string()),
             ("older output discarded", s.discarded.to_string()),
             ("output discarded while surface was hidden", s.hidden.to_string()),
@@ -292,7 +302,7 @@ mod tests {
         stats.expect_callback(1, 4, now);
         stats.release_result(1, 4, true, false);
         stats.release_result(1, 5, false, true);
-        assert_eq!(stats.superseded(), 0);
+        assert_eq!(stats.counts().discarded, 0);
         assert!(
             stats
                 .report(now + Duration::from_secs(1))
@@ -317,7 +327,7 @@ mod tests {
         drop(s);
         stats.discard_older(1, true);
         stats.discard_older(1, false);
-        assert_eq!(stats.superseded(), 1);
+        assert_eq!(stats.counts().discarded, 1);
         assert_eq!(stats.lock().hidden, 2);
     }
 
@@ -329,6 +339,8 @@ mod tests {
         stats.output(1, now);
         stats.codec_flushed(1, now + Duration::from_millis(100));
         stats.output(1, now + Duration::from_secs(2));
+        assert_eq!(stats.counts().visible_outputs, Some(2));
+        assert_eq!(stats.counts().visible_releases, Some(0));
         assert_eq!(stats.lock().worst_output_gap, Duration::from_secs(2));
         stats.end_codec(1, now + Duration::from_secs(5));
         let s = stats.lock();
