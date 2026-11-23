@@ -46,8 +46,7 @@ pub struct Window {
     pub decode_ms: f64,
     /// Frames lost on the network, as a share of all frames.
     pub network_drop_pct: f64,
-    /// Decoded frames that never reached the screen (replaced by a newer one
-    /// before it was drawn, or dropped because the decoder queue was full).
+    /// Decoded frames superseded by a newer one before release or draw.
     pub display_drop_pct: f64,
     /// Average host processing latency, when the host reports it.
     pub host_ms: Option<f64>,
@@ -147,8 +146,8 @@ fn classify(w: &Window, sustained_deficit: bool) -> Diagnosis {
         },
         Bottleneck::Render => Diagnosis {
             bottleneck: dominant,
-            summary: "Frames are decoded but not shown in time. The display can't keep up with the stream's frame rate.",
-            key_metric: format!("{:.1}% frames not shown", w.display_drop_pct),
+            summary: "The client replaced decoded frames before presentation.",
+            key_metric: format!("{:.1}% decoded frames replaced", w.display_drop_pct),
         },
         Bottleneck::Host => Diagnosis {
             bottleneck: dominant,

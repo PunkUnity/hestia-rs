@@ -121,6 +121,7 @@ struct Totals {
     decoder_dropped: u64,
     superseded: u64,
     direct_superseded: u64,
+    direct_releases: Option<u64>,
 }
 
 struct Listener {
@@ -198,6 +199,10 @@ impl Listener {
             direct_superseded: self.decode.direct_video.superseded(),
             #[cfg(not(target_os = "android"))]
             direct_superseded: 0,
+            #[cfg(target_os = "android")]
+            direct_releases: self.decode.direct_video.visible_releases(),
+            #[cfg(not(target_os = "android"))]
+            direct_releases: None,
         };
         let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
         let prev = last.replace(now.clone())?;
@@ -248,6 +253,10 @@ impl Listener {
             dropped_waiting_idr: now.stats.dropped_waiting_idr,
             idr_requests: now.stats.idr_requests,
             decoded_fps: Some(window.decoded_fps),
+            direct_release_fps: now
+                .direct_releases
+                .zip(prev.direct_releases)
+                .map(|(now, prev)| delta(now, prev) as f64 / secs),
             decode_ms: Some(window.decode_ms),
             dropped: Some(now.decoder_dropped + now.superseded + now.direct_superseded),
             host_ms,
@@ -260,10 +269,13 @@ impl Listener {
     }
 
     fn stats_line(&self, s: &StatsSample, verdict: &diagnosis::Diagnosis) -> String {
+        let rates = match s.direct_release_fps {
+            Some(fps) => format!("{:.0} in / {fps:.0} released fps", s.fps),
+            None => format!("{:.0} fps", s.decoded_fps.unwrap_or(s.fps)),
+        };
         let mut line = format!(
-            "{}  ·  {:.0} fps  ·  {:.1} Mbps  ·  RTT {} ms  ·  decode {:.1} ms{}  ·  FEC {}  ·  lost {}  ·  dropped {}",
+            "{}  ·  {rates}  ·  {:.1} Mbps  ·  RTT {} ms  ·  decode {:.1} ms{}  ·  FEC {}  ·  lost {}  ·  dropped {}",
             self.label,
-            s.decoded_fps.unwrap_or(s.fps),
             s.mbps,
             s.rtt_ms,
             s.decode_ms.unwrap_or(0.0),

@@ -267,6 +267,7 @@ pub fn run(client: &HestiaClient, host_id: &str, opts: Options) -> Result<()> {
                         dropped_waiting_idr: stats.dropped_waiting_idr,
                         idr_requests: stats.idr_requests,
                         decoded_fps: decode_stats.as_ref().map(|_| window.decoded_fps),
+                        direct_release_fps: None,
                         decode_ms: decode_stats.as_ref().map(|d| d.mean_decode_ms()),
                         dropped: decode_stats.as_ref().map(|d| d.dropped.load(Ordering::Relaxed)),
                         host_ms,

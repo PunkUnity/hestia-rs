@@ -220,6 +220,11 @@ impl DirectVideoStats {
         self.lock().discarded
     }
 
+    pub fn visible_releases(&self) -> Option<u64> {
+        let state = self.lock();
+        state.codec.map(|_| state.released)
+    }
+
     pub fn report(&self, now: Instant) -> Vec<(&'static str, String)> {
         let mut s = self.lock();
         if !s.ever_active {

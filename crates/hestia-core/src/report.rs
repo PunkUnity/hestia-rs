@@ -83,6 +83,8 @@ pub struct StatsSample {
     pub idr_requests: u64,
     /// Decoder (when the client decodes).
     pub decoded_fps: Option<f64>,
+    /// Visible MediaCodec buffer releases in the Android Direct video path.
+    pub direct_release_fps: Option<f64>,
     pub decode_ms: Option<f64>,
     pub dropped: Option<u64>,
     /// Host-reported processing latency for this second.
@@ -172,12 +174,16 @@ fn stats_row(at: Duration, s: &StatsSample) -> String {
         _ => String::new(),
     };
     let host = s.host_ms.map(|h| format!(" | host {h:4.1} ms")).unwrap_or_default();
+    let direct = s
+        .direct_release_fps
+        .map(|fps| format!(" | Direct release {fps:5.1} fps"))
+        .unwrap_or_default();
     let verdict = s
         .verdict
         .map(|v| format!(" | <- {}", v.to_uppercase()))
         .unwrap_or_default();
     format!(
-        "{} | {:5.1} fps forwarded / {:.1} assembled | {:6.2} Mbps | rtt {:3}±{:<3} | fec {:5} | lost {:4} | waiting IDR {:4} | IDR requests {:3}{decode}{host}{verdict}",
+        "{} | {:5.1} fps forwarded / {:.1} assembled | {:6.2} Mbps | rtt {:3}±{:<3} | fec {:5} | lost {:4} | waiting IDR {:4} | IDR requests {:3}{decode}{direct}{host}{verdict}",
         elapsed(at),
         s.fps,
         s.assembled_fps,
@@ -610,11 +616,21 @@ mod tests {
             dropped_waiting_idr: 0,
             idr_requests: 0,
             decoded_fps: Some(fps),
+            direct_release_fps: None,
             decode_ms: Some(4.0),
             dropped: Some(0),
             host_ms: Some(3.0),
             verdict: if lost > 1 { Some("network") } else { None },
         }
+    }
+
+    #[test]
+    fn sample_distinguishes_forwarded_rate_from_direct_release_rate() {
+        let mut s = sample(60.0, 5, 0);
+        s.direct_release_fps = Some(48.0);
+        let row = stats_row(Duration::ZERO, &s);
+        assert!(row.contains("60.0 fps forwarded"));
+        assert!(row.contains("Direct release  48.0 fps"));
     }
 
     #[test]
