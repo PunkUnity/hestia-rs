@@ -28,6 +28,7 @@ pub(super) struct ActiveStream {
     generation: u64,
     out: Output,
     host_id: String,
+    hermes: bool,
     input: StreamInput,
     report: SharedReport,
     decode: Arc<DecodeStats>,
@@ -482,6 +483,7 @@ impl Controller {
                 held: Mutex::new(Held::default()),
             },
             host_id,
+            hermes: listener.hermes,
             input,
             report: session_report,
             decode,
@@ -1128,7 +1130,7 @@ impl Controller {
     /// Text and deletions from the on-screen keyboard, typed on the host.
     pub(super) fn stream_ime(self: &Shared, event: ImeEvent) {
         if let Some(active) = self.active_stream().as_ref() {
-            stream_input::ime(event, |event| active.out.send(&event));
+            stream_input::ime(event, active.hermes, |event| active.out.send(&event));
         }
     }
 
