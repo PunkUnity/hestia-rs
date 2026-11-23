@@ -1705,8 +1705,8 @@ export component SettingsPage inherits Page {
                         }
                         if root.mediacodec && root.direct-video: ChoiceRow {
                             label: "Frame pacing";
-                            hint: root.frame-pacing == 0 ? "One frame per refresh, timed to the display, with a frame of buffer for jitter"
-                                : (root.frame-pacing == 1 ? "Each frame goes on screen as soon as it's decoded" : "Shows every frame the decoder releases, never dropped by the display");
+                            hint: root.frame-pacing == 0 ? "Times frames to the display and limits how far ahead they can queue"
+                                : (root.frame-pacing == 1 ? "Releases the newest decoded frame immediately" : "Lets Android display released frames in queue order");
                             options: root.pacing-names;
                             index <=> root.frame-pacing;
                             want-focus: root.at(25);

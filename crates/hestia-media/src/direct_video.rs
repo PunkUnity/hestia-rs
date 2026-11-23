@@ -138,6 +138,10 @@ impl Measurement {
     pub(crate) fn discard_older(&self, visible: bool) {
         self.stats.direct_video.discard_older(self.id, visible);
     }
+
+    pub(crate) fn discard_for_pacing(&self) {
+        self.stats.direct_video.discard_for_pacing(self.id);
+    }
 }
 
 impl Drop for Measurement {

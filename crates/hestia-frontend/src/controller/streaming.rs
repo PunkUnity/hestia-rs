@@ -121,6 +121,7 @@ struct Totals {
     decoder_dropped: u64,
     superseded: u64,
     direct_superseded: u64,
+    direct_outputs: Option<u64>,
     direct_releases: Option<u64>,
 }
 
@@ -188,6 +189,8 @@ impl Listener {
     /// Per-second rates from the running totals, with the bottleneck
     /// verdict for that second.
     fn sample(&self, stats: StreamStats) -> Option<(StatsSample, diagnosis::Diagnosis)> {
+        #[cfg(target_os = "android")]
+        let direct = self.decode.direct_video.counts();
         let now = Totals {
             at: Instant::now(),
             stats,
@@ -196,11 +199,15 @@ impl Listener {
             decoder_dropped: self.decode.dropped.load(Ordering::Relaxed),
             superseded: self.present.superseded(),
             #[cfg(target_os = "android")]
-            direct_superseded: self.decode.direct_video.superseded(),
+            direct_superseded: direct.discarded,
             #[cfg(not(target_os = "android"))]
             direct_superseded: 0,
             #[cfg(target_os = "android")]
-            direct_releases: self.decode.direct_video.visible_releases(),
+            direct_outputs: direct.visible_outputs,
+            #[cfg(not(target_os = "android"))]
+            direct_outputs: None,
+            #[cfg(target_os = "android")]
+            direct_releases: direct.visible_releases,
             #[cfg(not(target_os = "android"))]
             direct_releases: None,
         };
@@ -211,7 +218,11 @@ impl Listener {
         let received = delta(now.stats.frames, prev.stats.frames);
         let skipped = delta(now.stats.dropped_waiting_idr, prev.stats.dropped_waiting_idr);
         let lost = delta(now.stats.lost_frames, prev.stats.lost_frames);
-        let decoded = delta(now.decoded, prev.decoded);
+        let handoffs = delta(now.decoded, prev.decoded);
+        let decoded = now
+            .direct_outputs
+            .zip(prev.direct_outputs)
+            .map_or(handoffs, |(now, prev)| delta(now, prev));
         let direct_superseded = delta(now.direct_superseded, prev.direct_superseded);
         let superseded = delta(now.superseded, prev.superseded) + direct_superseded;
         let host_frames = delta(now.stats.host_latency_frames, prev.stats.host_latency_frames);
@@ -228,17 +239,16 @@ impl Listener {
             target_fps: self.target_fps,
             received_fps: received as f64 / secs,
             decoded_fps: decoded as f64 / secs,
-            decode_ms: if decoded == 0 {
+            decode_ms: if handoffs == 0 {
                 0.0
             } else {
-                delta(now.decode_us, prev.decode_us) as f64 / decoded as f64 / 1000.0
+                delta(now.decode_us, prev.decode_us) as f64 / handoffs as f64 / 1000.0
             },
             skipped_waiting_idr_fps: skipped as f64 / secs,
             network_drop_pct: percent(lost, received + skipped + lost),
-            // Explicit replacements only. MediaCodec's asynchronous render
-            // notifications are not a drop signal. Direct replacements never
-            // reached the presenter, so include them in the denominator.
-            display_drop_pct: percent(superseded, decoded + direct_superseded),
+            // Direct's output counter already includes frames discarded
+            // before a release. Render callbacks are tracked separately.
+            display_drop_pct: percent(superseded, decoded),
             host_ms,
         };
         let verdict = self.diagnosis.lock().unwrap_or_else(|p| p.into_inner()).sample(&window);

@@ -101,12 +101,12 @@ impl VideoScale {
 pub enum FramePacing {
     /// One frame per display refresh, timed to vsync, with up to one frame
     /// held back to smooth over network jitter.
-    #[default]
     Balanced,
     /// The newest frame goes on screen as soon as it is decoded.
+    #[default]
     MinLatency,
-    /// Every frame the decoder releases is shown, none dropped by the
-    /// display.
+    /// Release the newest frame from each drain with timestamp zero so
+    /// Android can display it in queue order.
     MaxSmoothness,
 }
 
@@ -267,7 +267,7 @@ impl Default for StreamSettings {
             hardware_decoding: true,
             gpu_video: true,
             direct_video: true,
-            frame_pacing: FramePacing::Balanced,
+            frame_pacing: FramePacing::default(),
             touch_mode: None,
             onscreen_controller: false,
             orientation: StreamOrientation::Landscape,

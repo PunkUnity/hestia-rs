@@ -16,6 +16,13 @@ const CALLBACK_GRACE: Duration = Duration::from_secs(5);
 #[derive(Debug, Default)]
 pub struct DirectVideoStats(Mutex<State>);
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DirectVideoCounts {
+    pub visible_outputs: Option<u64>,
+    pub visible_releases: Option<u64>,
+    pub discarded: u64,
+}
+
 #[derive(Debug, Default)]
 struct State {
     codec: Option<usize>,
@@ -24,9 +31,11 @@ struct State {
     ever_measured: bool,
     period_ns: u64,
     pending: VecDeque<(i64, Instant)>,
+    outputs: u64,
     released: u64,
     tracked: u64,
     discarded: u64,
+    pacing_discards: u64,
     hidden: u64,
     failed: u64,
     matched: u64,
@@ -128,6 +137,7 @@ impl DirectVideoStats {
     pub(crate) fn output(&self, id: usize, now: Instant) {
         let mut s = self.lock();
         if s.codec == Some(id) {
+            s.outputs += 1;
             s.observe_output_gap(now);
             s.last_output = Some(now);
         }
@@ -180,6 +190,13 @@ impl DirectVideoStats {
         }
     }
 
+    pub(crate) fn discard_for_pacing(&self, id: usize) {
+        let mut s = self.lock();
+        if s.codec == Some(id) {
+            s.pacing_discards += 1;
+        }
+    }
+
     pub(crate) fn callback(&self, id: usize, pts: i64, render_ns: i64, arrival: Instant) {
         let mut s = self.lock();
         if s.codec != Some(id) || !s.callbacks {
@@ -214,15 +231,15 @@ impl DirectVideoStats {
         s.last_render_ns = Some(render_ns);
     }
 
-    /// Explicitly replaced pictures while the surface was visible. Callback
-    /// accounting is deliberately excluded from the live drop estimate.
-    pub fn superseded(&self) -> u64 {
-        self.lock().discarded
-    }
-
-    pub fn visible_releases(&self) -> Option<u64> {
-        let state = self.lock();
-        state.codec.map(|_| state.released)
+    /// Count codec output independently of decoder-worker handoffs, which
+    /// can carry the timing of only one frame from a drain pass.
+    pub fn counts(&self) -> DirectVideoCounts {
+        let s = self.lock();
+        DirectVideoCounts {
+            visible_outputs: s.codec.map(|_| s.outputs),
+            visible_releases: s.codec.map(|_| s.released),
+            discarded: s.discarded + s.pacing_discards,
+        }
     }
 
     pub fn report(&self, now: Instant) -> Vec<(&'static str, String)> {
@@ -233,8 +250,10 @@ impl DirectVideoStats {
         s.expire(now);
         s.observe_output_gap(now);
         let mut rows = vec![
+            ("visible decoder outputs", s.outputs.to_string()),
             ("visible releases", s.released.to_string()),
             ("older output discarded", s.discarded.to_string()),
+            ("output discarded at pacing limit", s.pacing_discards.to_string()),
             ("output discarded while surface was hidden", s.hidden.to_string()),
             ("release failures", s.failed.to_string()),
             (
@@ -292,7 +311,7 @@ mod tests {
         stats.expect_callback(1, 4, now);
         stats.release_result(1, 4, true, false);
         stats.release_result(1, 5, false, true);
-        assert_eq!(stats.superseded(), 0);
+        assert_eq!(stats.counts().discarded, 0);
         assert!(
             stats
                 .report(now + Duration::from_secs(1))
@@ -317,8 +336,31 @@ mod tests {
         drop(s);
         stats.discard_older(1, true);
         stats.discard_older(1, false);
-        assert_eq!(stats.superseded(), 1);
+        assert_eq!(stats.counts().discarded, 1);
         assert_eq!(stats.lock().hidden, 2);
+    }
+
+    #[test]
+    fn visible_outputs_include_pacing_discards_without_tracking_a_render() {
+        let stats = DirectVideoStats::default();
+        let now = Instant::now();
+        stats.begin_codec(1, 60, now);
+        stats.enable_callbacks(1);
+        for pts in 0..2 {
+            stats.output(1, now);
+            stats.expect_callback(1, pts, now);
+            stats.release_result(1, pts, true, true);
+        }
+        stats.output(1, now);
+        stats.discard_for_pacing(1);
+        let counts = stats.counts();
+        assert_eq!(counts.visible_outputs, Some(3));
+        assert_eq!(counts.visible_releases, Some(2));
+        assert_eq!(counts.discarded, 1);
+        let state = stats.lock();
+        assert_eq!(state.pending.len(), 2);
+        assert_eq!(state.pacing_discards, 1);
+        assert_eq!(state.discarded, 0);
     }
 
     #[test]

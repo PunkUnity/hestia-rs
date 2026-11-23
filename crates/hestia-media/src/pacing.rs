@@ -5,7 +5,8 @@
 //!   on the next vsync, and at most about two frames are scheduled ahead
 //!   (Hestia Android holds up to two in its queue). The release carries that
 //!   vsync's time, so the system shows the frame at that refresh even when
-//!   the decoder thread releases it a little early.
+//!   the decoder thread releases it a little early. If there is no room in
+//!   that window, the new output is discarded.
 //! - **Min latency:** the newest decoded frame is released at once.
 //! - **Max smoothness:** the newest decoded frame is released with a zero
 //!   timestamp, which Hestia Android uses so the display shows every frame
@@ -19,8 +20,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Pacing {
-    #[default]
     Balanced,
+    #[default]
     MinLatency,
     MaxSmoothness,
 }
@@ -35,7 +36,7 @@ impl Pacing {
     }
 }
 
-static MODE: AtomicU8 = AtomicU8::new(0);
+static MODE: AtomicU8 = AtomicU8::new(Pacing::MinLatency as u8);
 
 /// The pacing the next decoder start uses.
 pub fn set_mode(mode: Pacing) {
@@ -44,9 +45,9 @@ pub fn set_mode(mode: Pacing) {
 
 pub fn mode() -> Pacing {
     match MODE.load(Ordering::Acquire) {
-        1 => Pacing::MinLatency,
+        0 => Pacing::Balanced,
         2 => Pacing::MaxSmoothness,
-        _ => Pacing::Balanced,
+        _ => Pacing::MinLatency,
     }
 }
 
@@ -56,38 +57,41 @@ const MAX_AHEAD_FRAMES: i64 = 2;
 /// Balanced timing: the vsync each released frame is shown at.
 #[derive(Debug, Default)]
 pub struct Schedule {
-    last_target: Option<i64>,
+    /// Target refresh and release timestamp of the last scheduled frame.
+    last: Option<(i64, i64)>,
 }
 
 impl Schedule {
     /// The vsync (CLOCK_MONOTONIC ns) for a frame released at `now`, given a
     /// recent vsync time and the refresh period, for a stream with frames
-    /// `frame_ns` apart.
-    pub fn next(&mut self, now: i64, vsync: i64, period: i64, frame_ns: i64) -> i64 {
+    /// `frame_ns` apart. None means the next slot is too far ahead.
+    pub fn next(&mut self, now: i64, vsync: i64, period: i64, frame_ns: i64) -> Option<i64> {
         let period = period.max(1);
+        let frame_ns = frame_ns.max(1);
         // The first refresh at or after `t`.
         let slot = |t: i64| {
             vsync
                 + (t - vsync).div_euclid(period) * period
                 + if (t - vsync).rem_euclid(period) == 0 { 0 } else { period }
         };
-        let soonest = slot(now);
-        let mut target = match self.last_target {
-            Some(last) => slot(now.max(last + frame_ns * 4 / 5)),
-            None => soonest,
-        };
-        // Behind by more than the queue allows (a burst after a stall):
-        // start again from the next refresh rather than build latency.
+        let earliest = self.last.map_or(now, |(target, released_at)| {
+            // A refresh-rate change can also shift the half-refresh offset.
+            now.max(target + (frame_ns * 4 / 5).max(1))
+                .max(released_at + period / 2 + 1)
+        });
+        let target = slot(earliest);
+        // The codec already owns the scheduled buffers. Keep their order
+        // when the next frame would exceed the latency window.
         if target - now > MAX_AHEAD_FRAMES * frame_ns + period {
-            target = soonest;
+            return None;
         }
-        self.last_target = Some(target);
-        target
+        self.last = Some((target, Self::release_time(target, period)));
+        Some(target)
     }
 
     /// Forget the previous frame (codec flushed or restarted).
     pub fn reset(&mut self) {
-        self.last_target = None;
+        self.last = None;
     }
 
     /// The timestamp to release with for a frame due at `target`: half a
@@ -256,7 +260,7 @@ mod tests {
         for i in 0..6 {
             // Frames decoded 3 ms after their refresh.
             let now = vsync + i * F60 + 3 * MS;
-            targets.push(s.next(now, vsync, P120, F60));
+            targets.push(s.next(now, vsync, P120, F60).unwrap());
         }
         let gaps: Vec<i64> = targets.windows(2).map(|w| (w[1] - w[0] + P120 / 2) / P120).collect();
         assert_eq!(gaps, vec![2, 2, 2, 2, 2], "one frame every two refreshes: {targets:?}");
@@ -267,22 +271,33 @@ mod tests {
 
     #[test]
     fn a_burst_is_spread_over_refreshes_and_capped() {
-        let mut s = Schedule::default();
         let vsync = 1_000 * MS;
         let now = vsync + MS;
-        // Five frames decoded at the same moment after a stall.
-        let targets: Vec<i64> = (0..5).map(|_| s.next(now, vsync, P120, F60)).collect();
-        assert_eq!(targets[0], vsync + P120, "first one at the next refresh");
-        assert!(
-            targets.windows(2).take(2).all(|w| w[1] - w[0] == 2 * P120),
-            "{targets:?}"
-        );
-        // No more than about two frames ahead: the fourth starts over.
-        assert!(
-            targets.iter().all(|t| t - now <= MAX_AHEAD_FRAMES * F60 + P120),
-            "{targets:?}"
-        );
-        assert_eq!(targets[3], vsync + P120, "{targets:?}");
+        for (period, spacing) in [(P120, 2 * P120), (F60, F60)] {
+            let mut s = Schedule::default();
+            for i in 0..3 {
+                let target = s.next(now, vsync, period, F60).unwrap();
+                assert_eq!(target, vsync + period + i * spacing);
+                assert!(target - now <= MAX_AHEAD_FRAMES * F60 + period);
+            }
+            assert_eq!(s.next(now, vsync, period, F60), None);
+            assert_eq!(s.next(now, vsync, period, F60), None);
+            assert_eq!(
+                s.next(now + spacing, vsync, period, F60),
+                Some(vsync + period + 3 * spacing)
+            );
+        }
+    }
+
+    #[test]
+    fn choosing_a_different_refresh_period_preserves_release_order() {
+        let mut s = Schedule::default();
+        let now = 1_000 * MS;
+        let last = s.next(now, now, P120, P120).unwrap();
+        let slower_period = P120 * 4;
+        let first_slower_refresh = now + P120;
+        let next = s.next(now, first_slower_refresh, slower_period, P120).unwrap();
+        assert!(Schedule::release_time(next, slower_period) > Schedule::release_time(last, P120));
     }
 
     #[test]
@@ -292,20 +307,20 @@ mod tests {
         let vsync = 500 * MS;
         let a = s.next(vsync + 2 * MS, vsync, p60, F60);
         let b = s.next(vsync + p60 + 2 * MS, vsync, p60, F60);
-        assert_eq!((a, b), (vsync + p60, vsync + 2 * p60));
+        assert_eq!((a, b), (Some(vsync + p60), Some(vsync + 2 * p60)));
         // A frame that arrives a little early still gets the next refresh.
         let c = s.next(vsync + 2 * p60 - 5 * MS, vsync, p60, F60);
-        assert_eq!(c, vsync + 3 * p60);
+        assert_eq!(c, Some(vsync + 3 * p60));
     }
 
     #[test]
     fn the_vsync_sample_can_be_older_or_newer_than_now() {
         let mut s = Schedule::default();
         let vsync = 1_000 * MS;
-        let t = s.next(vsync - 20 * MS, vsync, P120, F60);
+        let t = s.next(vsync - 20 * MS, vsync, P120, F60).unwrap();
         assert!(t >= vsync - 20 * MS && (t - vsync).rem_euclid(P120) == 0);
         s.reset();
-        let t = s.next(vsync + 100 * MS, vsync, P120, F60);
+        let t = s.next(vsync + 100 * MS, vsync, P120, F60).unwrap();
         assert!(t >= vsync + 100 * MS && t - (vsync + 100 * MS) < P120);
     }
 

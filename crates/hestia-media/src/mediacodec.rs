@@ -637,9 +637,8 @@ impl Running {
         Ok(())
     }
 
-    /// Direct output: the newest decoded picture goes to the surface now and
-    /// the system shows it at the next refresh; older ones finished in the
-    /// same pass are skipped (never shown out of order).
+    /// Release decoded pictures to the Direct surface according to the
+    /// selected pacing mode, retaining the newest handoff for the worker.
     fn drain_direct(
         &mut self,
         out: &mut DecodedFrame,
@@ -707,34 +706,45 @@ impl Running {
         let mut newest = None;
         while let Some((buffer, timing)) = ready.pop_front() {
             let pts = buffer.info().presentation_time_us();
-            if visible && let Some(measurement) = &self.direct_measurement {
+            let (render, render_at) = match (visible, self.pacing) {
+                (false, _) => (false, None),
+                (true, Pacing::MinLatency) => (true, None),
+                (true, Pacing::MaxSmoothness) => (true, Some(0)),
+                (true, Pacing::Balanced) => match self.vsync.as_ref().and_then(VsyncClock::latest) {
+                    Some((vsync, period)) => {
+                        let at = self
+                            .schedule
+                            .next(monotonic_ns(), vsync, period, self.frame_us as i64 * 1000)
+                            .map(|target| Schedule::release_time(target, period));
+                        (at.is_some(), at)
+                    }
+                    // The vsync clock is still warming up.
+                    None => (true, None),
+                },
+            };
+            if render && let Some(measurement) = &self.direct_measurement {
                 measurement.expect_callback(pts);
             }
-            let release = if !visible {
-                self.codec.release_output_buffer(buffer, false)
-            } else {
-                match self.pacing {
-                    Pacing::MinLatency => self.codec.release_output_buffer(buffer, true),
-                    // A zero timestamp: the display shows every frame given.
-                    Pacing::MaxSmoothness => self.codec.release_output_buffer_at_time(buffer, 0),
-                    Pacing::Balanced => match self.vsync.as_ref().and_then(VsyncClock::latest) {
-                        Some((vsync, period)) => {
-                            let target = self
-                                .schedule
-                                .next(monotonic_ns(), vsync, period, self.frame_us as i64 * 1000);
-                            self.codec
-                                .release_output_buffer_at_time(buffer, Schedule::release_time(target, period))
-                        }
-                        // No vsync times yet: show it at once.
-                        None => self.codec.release_output_buffer(buffer, true),
-                    },
-                }
+            let release = match render_at {
+                Some(at) => self.codec.release_output_buffer_at_time(buffer, at),
+                None => self.codec.release_output_buffer(buffer, render),
             };
             if let Some(measurement) = &self.direct_measurement {
-                measurement.release_result(pts, visible, release.is_ok());
+                if visible && !render && release.is_ok() {
+                    measurement.discard_for_pacing();
+                } else {
+                    measurement.release_result(pts, render, release.is_ok());
+                }
             }
-            release.map_err(|e| format!("release output: {e:?}"))?;
-            newest = Some(timing);
+            if let Err(e) = release {
+                for (buffer, _) in ready {
+                    let _ = self.codec.release_output_buffer(buffer, false);
+                }
+                return Err(format!("release output: {e:?}"));
+            }
+            if render {
+                newest = Some(timing);
+            }
         }
         let Some(timing) = newest else {
             return Ok(None);
