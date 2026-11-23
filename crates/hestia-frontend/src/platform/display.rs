@@ -198,3 +198,26 @@ pub fn set_direct_video(on: bool, width: u32, height: u32, fps: u32) {
     #[cfg(not(target_os = "android"))]
     let _ = (on, width, height, fps);
 }
+
+/// Android PIN pairing in progress: a foreground service keeps the app's
+/// network while the user is in the browser typing the PIN.
+pub fn set_pairing_active(on: bool) {
+    #[cfg(target_os = "android")]
+    {
+        let result = with_helper(|env, activity, helper| {
+            use jni::objects::JValue;
+            env.call_static_method(
+                helper,
+                "setPairingService",
+                "(Landroid/app/Activity;Z)V",
+                &[JValue::Object(activity), JValue::Bool(u8::from(on))],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = result {
+            log::warn!("pairing service: {e}");
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = on;
+}

@@ -475,7 +475,11 @@ impl Controller {
         let c = self.clone();
         spawn("hestia-pair", move || {
             let Some(core) = c.core() else { return };
+            // The PIN is typed on the host, often in the phone's browser:
+            // keep the network while the app is in the background.
+            crate::platform::set_pairing_active(true);
             let result = core.pair(&id, &pin, passphrase.as_deref());
+            crate::platform::set_pairing_active(false);
             if c.state().pair_generation != generation {
                 return; // abandoned attempt
             }
