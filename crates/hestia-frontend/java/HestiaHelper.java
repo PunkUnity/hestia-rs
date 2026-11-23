@@ -134,6 +134,25 @@ public final class HestiaHelper {
     }
 
     /**
+     * PIN pairing on/off: a short foreground service keeps the app's network
+     * while the user is in the browser typing the PIN (see PairingService,
+     * compiled into the APK, hence started by name).
+     */
+    public static void setPairingService(final Activity activity, final boolean on) {
+        android.content.Intent intent = new android.content.Intent();
+        intent.setClassName(activity.getPackageName(), "com.mroz59.hestia.rs.PairingService");
+        try {
+            if (on) {
+                activity.startForegroundService(intent);
+            } else {
+                activity.stopService(intent);
+            }
+        } catch (RuntimeException ignored) {
+            // Pairing still runs without it.
+        }
+    }
+
+    /**
      * Rumble from the host: on the controller's own motor when it has one,
      * otherwise on the phone. Strengths are 0-65535; 0 and 0 stops it.
      * GameStream rumble is a level that holds until changed, hence the
