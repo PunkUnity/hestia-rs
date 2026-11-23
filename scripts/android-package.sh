@@ -36,12 +36,13 @@ if [ ${#abis[@]} -eq 0 ]; then
 fi
 echo "ABIs: ${abis[*]}"
 
-# The launch activity must be available to the Android framework before it
-# loads the native library. The two JNI helper dex files stay inside the .so.
+# The launch activity and the pairing service must be available to the
+# Android framework before it loads the native library. The two JNI helper
+# dex files stay inside the .so.
 mkdir -p "$work/classes"
-javac --release 8 -classpath "$android_jar" -d "$work/classes" "$android/java/HestiaActivity.java"
+javac --release 8 -classpath "$android_jar" -d "$work/classes" "$android"/java/*.java
 "$build_tools/d8" --lib "$android_jar" --min-api 26 --output "$work" \
-    "$work/classes/com/mroz59/hestia/rs/HestiaActivity.class"
+    "$work"/classes/com/mroz59/hestia/rs/*.class
 
 "$build_tools/aapt2" compile --dir "$android/res" -o "$work/res.zip"
 "$build_tools/aapt2" link -o "$work/base.apk" -I "$android_jar" \
