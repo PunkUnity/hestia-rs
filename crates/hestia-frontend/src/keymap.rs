@@ -2,9 +2,9 @@
 //!
 //! Slint reports keys as text: printable characters as themselves, named
 //! keys as control characters or private-use code points (the `Key`
-//! namespace, following the NSEvent function-key convention). Modifier keys
-//! arrive as separate events, so a shifted character maps to its unshifted
-//! key and the host applies the Shift it already received.
+//! namespace, following the NSEvent function-key convention). Printable
+//! characters carry their US-layout key and whether that character needs
+//! Shift for toolkits that report the character without the modifier.
 //!
 //! Characters are mapped by their US-layout key; anything without a key
 //! (accented letters, IME output) is sent as text on key press. That is the
@@ -15,7 +15,7 @@ use hestia_core::stream::input::vk;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mapped {
-    Key(u16),
+    Key { code: u16, implied_shift: bool },
     Text(String),
 }
 
@@ -174,11 +174,14 @@ pub fn map(text: &str) -> Option<Mapped> {
         // Composed input (dead keys, IME).
         return Some(Mapped::Text(text.to_owned()));
     }
-    if let Some(key) = special(first) {
-        return Some(Mapped::Key(key));
+    if let Some(code) = special(first) {
+        return Some(Mapped::Key {
+            code,
+            implied_shift: false,
+        });
     }
-    if let Some((key, _implied_shift)) = vk::from_char(first) {
-        return Some(Mapped::Key(key));
+    if let Some((code, implied_shift)) = vk::from_char(first) {
+        return Some(Mapped::Key { code, implied_shift });
     }
     if first.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&first) {
         return None;
@@ -190,23 +193,27 @@ pub fn map(text: &str) -> Option<Mapped> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn maps_named_keys() {
-        assert_eq!(map("\u{F702}"), Some(Mapped::Key(vk::LEFT)));
-        assert_eq!(map("\u{F704}"), Some(Mapped::Key(vk::F1)));
-        assert_eq!(map("\u{F70F}"), Some(Mapped::Key(vk::F1 + 11)));
-        assert_eq!(map("\n"), Some(Mapped::Key(vk::RETURN)));
-        assert_eq!(map("\u{1b}"), Some(Mapped::Key(vk::ESCAPE)));
-        assert_eq!(map("\u{10}"), Some(Mapped::Key(vk::LSHIFT)));
+    fn key(code: u16, implied_shift: bool) -> Option<Mapped> {
+        Some(Mapped::Key { code, implied_shift })
     }
 
     #[test]
-    fn maps_characters_to_unshifted_keys() {
-        assert_eq!(map("a"), Some(Mapped::Key(b'A' as u16)));
-        assert_eq!(map("A"), Some(Mapped::Key(b'A' as u16)));
-        assert_eq!(map("!"), Some(Mapped::Key(b'1' as u16)));
-        assert_eq!(map(" "), Some(Mapped::Key(vk::SPACE)));
-        assert_eq!(map("?"), Some(Mapped::Key(vk::OEM_2)));
+    fn maps_named_keys() {
+        assert_eq!(map("\u{F702}"), key(vk::LEFT, false));
+        assert_eq!(map("\u{F704}"), key(vk::F1, false));
+        assert_eq!(map("\u{F70F}"), key(vk::F1 + 11, false));
+        assert_eq!(map("\n"), key(vk::RETURN, false));
+        assert_eq!(map("\u{1b}"), key(vk::ESCAPE, false));
+        assert_eq!(map("\u{10}"), key(vk::LSHIFT, false));
+    }
+
+    #[test]
+    fn maps_characters_to_keys_with_implied_shift() {
+        assert_eq!(map("a"), key(b'A' as u16, false));
+        assert_eq!(map("A"), key(b'A' as u16, true));
+        assert_eq!(map("!"), key(b'1' as u16, true));
+        assert_eq!(map(" "), key(vk::SPACE, false));
+        assert_eq!(map("?"), key(vk::OEM_2, true));
     }
 
     #[test]

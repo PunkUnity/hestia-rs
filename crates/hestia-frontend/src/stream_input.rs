@@ -442,13 +442,18 @@ fn trackpad_events(outputs: Vec<touch::Output>) -> impl Iterator<Item = InputEve
     })
 }
 
-pub(crate) fn key(text: &str, pressed: bool, modifiers: Modifiers) -> Option<InputEvent> {
+pub(crate) fn key(text: &str, pressed: bool, mut modifiers: Modifiers) -> Option<InputEvent> {
     match keymap::map(text) {
-        Some(Mapped::Key(key)) => Some(InputEvent::Key {
-            key,
-            pressed,
-            modifiers,
-        }),
+        Some(Mapped::Key { code, implied_shift }) => {
+            // A printable fallback can arrive without the Shift that produced it.
+            // For shortcuts, use the modifiers the toolkit actually reported.
+            modifiers.shift |= implied_shift && !(modifiers.ctrl || modifiers.alt || modifiers.meta);
+            Some(InputEvent::Key {
+                key: code,
+                pressed,
+                modifiers,
+            })
+        }
         Some(Mapped::Text(text)) if pressed => Some(InputEvent::Text(text)),
         _ => None,
     }
@@ -613,6 +618,31 @@ pub(crate) fn scroll(dx: f32, dy: f32) -> Option<InputEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn character_fallback_preserves_shifted_text_and_shortcut_modifiers() {
+        let none = Modifiers::default();
+        let ctrl = Modifiers { ctrl: true, ..none };
+        let shift = Modifiers { shift: true, ..none };
+        for (text, code, modifiers, expected) in [
+            ("!", b'1' as u16, none, shift),
+            ("A", b'A' as u16, none, shift),
+            ("a", b'A' as u16, none, none),
+            ("C", b'C' as u16, ctrl, ctrl),
+            ("\t", vk::TAB, shift, shift),
+        ] {
+            for pressed in [true, false] {
+                assert_eq!(
+                    super::key(text, pressed, modifiers),
+                    Some(InputEvent::Key {
+                        key: code,
+                        pressed,
+                        modifiers: expected,
+                    })
+                );
+            }
+        }
+    }
 
     #[test]
     fn hermes_ime_commits_ascii_as_key_taps_with_implied_shift() {
