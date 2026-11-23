@@ -140,7 +140,9 @@ export component AppWindow inherits Window {
     }
     in property <string> stream-stats;
     in property <string> stream-status;
-    in-out property <bool> stream-show-stats: true;
+    // Off by default: the overlay covers the top of the host's screen (title
+    // bars, panels). The stream menu or Ctrl+Alt+Shift+S shows it.
+    in-out property <bool> stream-show-stats: false;
     in property <bool> stream-fullscreen;
     in property <int> stream-touch-mode: 0;
     in-out property <bool> stream-menu-open: false;
