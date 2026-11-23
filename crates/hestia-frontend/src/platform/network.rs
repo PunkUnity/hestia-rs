@@ -1,6 +1,85 @@
 //! Android network selection for LAN hosts.
 
+use hestia_core::stream::StreamConfig;
+use jni::JNIEnv;
+use jni::objects::{JObject, JValue};
+
 use super::android::with_activity;
+
+const TRANSPORT_CELLULAR: i32 = 0;
+const TRANSPORT_VPN: i32 = 4;
+const NET_CAPABILITY_NOT_VPN: i32 = 15;
+const NETWORK_SIG: &str = "(Landroid/net/Network;)";
+
+fn connectivity_manager<'local>(
+    env: &mut JNIEnv<'local>,
+    activity: &JObject<'_>,
+) -> jni::errors::Result<JObject<'local>> {
+    let name = env.new_string("connectivity")?;
+    env.call_method(
+        activity,
+        "getSystemService",
+        "(Ljava/lang/String;)Ljava/lang/Object;",
+        &[JValue::Object(&name)],
+    )?
+    .l()
+}
+
+/// Private host addresses can be reached through an Android VPN or
+/// cellular network. Use the WAN packet size and QoS settings on either.
+pub(crate) fn configure_stream_network(mut config: StreamConfig) -> StreamConfig {
+    if config.streaming_remotely {
+        return config;
+    }
+    let mut remote = false;
+    let result = with_activity(|env, activity| {
+        let cm = connectivity_manager(env, activity)?;
+        // A process explicitly routed to local Wi-Fi can use the LAN
+        // settings even when Android's default is cellular.
+        let mut network = env
+            .call_method(&cm, "getBoundNetworkForProcess", "()Landroid/net/Network;", &[])?
+            .l()?;
+        if network.is_null() {
+            network = env
+                .call_method(&cm, "getActiveNetwork", "()Landroid/net/Network;", &[])?
+                .l()?;
+        }
+        if network.is_null() {
+            return Ok(());
+        }
+        let caps = env
+            .call_method(
+                &cm,
+                "getNetworkCapabilities",
+                format!("{NETWORK_SIG}Landroid/net/NetworkCapabilities;"),
+                &[JValue::Object(&network)],
+            )?
+            .l()?;
+        if !caps.is_null() {
+            remote = env
+                .call_method(&caps, "hasTransport", "(I)Z", &[JValue::Int(TRANSPORT_CELLULAR)])?
+                .z()?
+                || env
+                    .call_method(&caps, "hasTransport", "(I)Z", &[JValue::Int(TRANSPORT_VPN)])?
+                    .z()?
+                || !env
+                    .call_method(&caps, "hasCapability", "(I)Z", &[JValue::Int(NET_CAPABILITY_NOT_VPN)])?
+                    .z()?;
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        log::debug!("could not determine Android stream network: {e}");
+    } else if remote {
+        config.streaming_remotely = true;
+        config.packet_size = StreamConfig::WAN_PACKET_SIZE;
+        log::info!(
+            "Android stream uses cellular or VPN; using WAN packet size {}",
+            config.packet_size
+        );
+    }
+    config
+}
 
 /// Called before each connection to a host (see [`crate::netroute`]): binds
 /// the app to the Wi-Fi/Ethernet network that holds a LAN address when that
@@ -30,24 +109,12 @@ pub fn route_for(addr: &std::net::SocketAddr) {
 }
 
 fn apply_route(ip: std::net::IpAddr) -> Result<(), String> {
-    use jni::objects::{JByteArray, JObject, JObjectArray, JValue};
+    use jni::objects::{JByteArray, JObjectArray};
 
     use crate::netroute::{self, NetInfo};
 
-    const TRANSPORT_CELLULAR: i32 = 0;
-    const TRANSPORT_VPN: i32 = 4;
-    const NETWORK_SIG: &str = "(Landroid/net/Network;)";
-
     with_activity(|env, activity| {
-        let name = env.new_string("connectivity")?;
-        let cm = env
-            .call_method(
-                activity,
-                "getSystemService",
-                "(Ljava/lang/String;)Ljava/lang/Object;",
-                &[JValue::Object(&name)],
-            )?
-            .l()?;
+        let cm = connectivity_manager(env, activity)?;
         let active = env
             .call_method(&cm, "getActiveNetwork", "()Landroid/net/Network;", &[])?
             .l()?;

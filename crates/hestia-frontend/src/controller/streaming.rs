@@ -378,6 +378,8 @@ impl Controller {
     ) -> Result<(), String> {
         let (decoder, formats) = video.decoder;
         let config = launched.stream_config(&formats).map_err(|e| e.to_string())?;
+        #[cfg(target_os = "android")]
+        let config = platform::configure_stream_network(config);
         hestia_core::add_stream_config_to_report(&config, decoder.name(), &mut report::lock(&session_report));
         let generation = self.stream_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let present = Arc::new(Presentation::new(generation, video.gpu));
