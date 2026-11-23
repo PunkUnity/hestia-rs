@@ -41,25 +41,26 @@ export global Nav {
 }
 
 export global Theme {
-    // Palette
-    out property <color> bg: #110e0c;           // soot
-    out property <color> surface: #1a1613;      // ash: bars, sheets, menus
-    out property <color> card: #231e1a;         // coal: groups, tiles
-    out property <color> card-hover: #2e2823;
-    out property <color> border: #3b332c;       // seams
-    out property <color> text: #f5eee8;         // bone
-    out property <color> muted: #ab9f95;        // smoke
-    out property <color> faint: #71675f;        // cinder
-    out property <color> accent: #ff7a2e;       // ember
-    out property <color> accent-hover: #ff9a57;
-    out property <color> accent-pressed: #e3631d;
-    out property <color> on-accent: #1f0c02;
-    out property <color> glow: #ff7a2e80;
-    out property <color> ok: #67d491;
-    out property <color> warn: #f5b43f;
-    out property <color> danger: #ff6868;
-    out property <color> info: #9ec5ea;
-    out property <color> scrim: #0a0807c8;
+    // Built-in palettes: Daylight and the original Hearth.
+    in-out property <bool> daylight;
+    out property <color> bg: root.daylight ? #edf2f9 : #110e0c;
+    out property <color> surface: root.daylight ? #f8fafd : #1a1613;
+    out property <color> card: root.daylight ? #ffffff : #231e1a;
+    out property <color> card-hover: root.daylight ? #e5ebf9 : #2e2823;
+    out property <color> border: root.daylight ? #bdc9df : #3b332c;
+    out property <color> text: root.daylight ? #172238 : #f5eee8;
+    out property <color> muted: root.daylight ? #44536d : #ab9f95;
+    out property <color> faint: root.daylight ? #586984 : #71675f;
+    out property <color> accent: root.daylight ? #3b4e9d : #ff7a2e;
+    out property <color> accent-hover: root.daylight ? #4359af : #ff9a57;
+    out property <color> accent-pressed: root.daylight ? #2c3b7d : #e3631d;
+    out property <color> on-accent: root.daylight ? #ffffff : #1f0c02;
+    out property <color> glow: root.daylight ? #415ab74d : #ff7a2e80;
+    out property <color> ok: root.daylight ? #176848 : #67d491;
+    out property <color> warn: root.daylight ? #795000 : #f5b43f;
+    out property <color> danger: root.daylight ? #aa2642 : #ff6868;
+    out property <color> info: root.daylight ? #254d93 : #9ec5ea;
+    out property <color> scrim: root.daylight ? #172238a8 : #0a0807c8;
     out property <string> font: "Outfit";
 
     // The window's size (set by the window). Phones in portrait are

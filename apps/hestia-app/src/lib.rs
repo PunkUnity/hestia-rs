@@ -20,6 +20,7 @@ mod slint_ui;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use hestia_core::store::{AppearanceTheme, Store};
 use hestia_frontend::Controller;
 use hestia_frontend::presentation::GpuWindow;
 
@@ -50,6 +51,25 @@ fn run_window(
     #[cfg(not(target_os = "android"))]
     desktop_input::install();
     let ui = AppWindow::new()?;
+    let appearance_dir = data_dir.clone();
+    match Store::open(&appearance_dir).and_then(|store| store.load_theme()) {
+        Ok(theme) => ui.set_saved_theme(i32::from(theme == AppearanceTheme::Daylight)),
+        Err(e) => log::warn!("could not load appearance: {e}"),
+    }
+    ui.on_save_theme(move |index| {
+        let theme = if index == 1 {
+            AppearanceTheme::Daylight
+        } else {
+            AppearanceTheme::Hearth
+        };
+        match Store::open(&appearance_dir).and_then(|store| store.save_theme(theme)) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("could not save appearance: {e}");
+                false
+            }
+        }
+    });
     ui.set_is_android(cfg!(target_os = "android"));
     #[cfg(target_os = "android")]
     ui.set_has_touch_input(!matches!(

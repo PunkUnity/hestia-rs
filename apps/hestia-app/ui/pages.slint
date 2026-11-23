@@ -1347,6 +1347,8 @@ export component SettingsPage inherits Page {
     in-out property <bool> hardware-decoding;
     in-out property <bool> gpu-video;
     in-out property <bool> direct-video;
+    in-out property <int> theme;
+    in property <bool> theme-save-failed;
     in property <bool> android;
     in property <bool> touch-controls;
     // The PyroWave decoder renders planar frames, including on Android.
@@ -1370,16 +1372,18 @@ export component SettingsPage inherits Page {
     property <[string]> scale-names: ["Fit", "Fill", "Stretch"];
     property <[string]> orientation-names: ["Landscape", "Portrait", "Follow the device"];
     property <[string]> speaker-names: ["Stereo", "5.1 surround", "7.1 surround"];
+    property <[string]> theme-names: ["Hearth (dark)", "Daylight (light)"];
+    property <int> theme-row: 25;
     property <string> custom-text;
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
+    // order: Theme (25), 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
     // saved profiles (100…), 20…23.
     property <int> nav: -1;
     focus-first => {
         if (root.nav == -1) {
-            root.nav = 0;
+            root.nav = root.theme-row;
         }
     }
     in property <int> refocus;
@@ -1413,6 +1417,8 @@ export component SettingsPage inherits Page {
         return (i != 8 || root.mediacodec || root.gpu-conversion) && (i != 10 || root.android);
     }
     pure function step(from: int, dir: int) -> int {
+        if (from == root.theme-row) { return dir > 0 ? 0 : root.theme-row; }
+        if (from == 0 && dir < 0) { return root.theme-row; }
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
@@ -1437,7 +1443,7 @@ export component SettingsPage inherits Page {
             } else if (key == Key.LeftArrow && from == -3) {
                 root.nav = -2;
             } else if (key == Key.DownArrow) {
-                root.nav = 0;
+                root.nav = root.theme-row;
             } else {
                 return false;
             }
@@ -1471,6 +1477,8 @@ export component SettingsPage inherits Page {
             root.orientation = i;
         } else if (id == 15) {
             root.audio = i;
+        } else if (id == root.theme-row) {
+            root.theme = i;
         }
     }
 
@@ -1482,7 +1490,7 @@ export component SettingsPage inherits Page {
         }
         key-pressed(event) => {
             if (event.text == Key.UpArrow || event.text == Key.DownArrow || event.text == Key.LeftArrow || event.text == Key.RightArrow) {
-                root.nav = 0;
+                root.nav = root.theme-row;
                 return accept;
             }
             return reject;
@@ -1535,6 +1543,26 @@ export component SettingsPage inherits Page {
                     padding-top: 6px;
                     padding-bottom: 40px;
                     spacing: 24px;
+
+                    Group {
+                        title: "Appearance";
+                        ChoiceRow {
+                            label: "Theme";
+                            hint: root.theme-save-failed ? "Could not save the theme. Try again." : "Preview a theme, then Save to keep it";
+                            options: root.theme-names;
+                            index <=> root.theme;
+                            want-focus: root.at(root.theme-row);
+                            nav(k) => {
+                                return root.move(root.theme-row, k);
+                            }
+                            entered => {
+                                root.nav = root.theme-row;
+                            }
+                            open => {
+                                root.sheet = root.theme-row;
+                            }
+                        }
+                    }
 
                     Group {
                         title: "Stream quality";
@@ -1987,11 +2015,11 @@ export component SettingsPage inherits Page {
     if root.sheet >= 0: OptionSheet {
         width: 100%;
         height: 100%;
-        title: root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
+        title: root.sheet == root.theme-row ? "Theme" : root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
             : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : "Speakers";
-        options: root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
+        options: root.sheet == root.theme-row ? root.theme-names : root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
             : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
-        current: root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
+        current: root.sheet == root.theme-row ? root.theme : root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
             : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.audio;
         picked(i) => {
             root.choose(root.sheet, i);
