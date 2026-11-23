@@ -25,6 +25,22 @@ pub struct StoredHosts {
     pub hosts: Vec<HostRecord>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppearanceTheme {
+    Daylight,
+    Midnight,
+    #[default]
+    #[serde(other)]
+    Hearth,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Appearance {
+    theme: AppearanceTheme,
+}
+
 #[derive(Debug, Clone)]
 pub struct Store {
     dir: PathBuf,
@@ -87,6 +103,14 @@ impl Store {
         self.write("settings.json", settings)
     }
 
+    pub fn load_theme(&self) -> io::Result<AppearanceTheme> {
+        Ok(self.read::<Appearance>("appearance.json")?.unwrap_or_default().theme)
+    }
+
+    pub fn save_theme(&self, theme: AppearanceTheme) -> io::Result<()> {
+        self.write("appearance.json", &Appearance { theme })
+    }
+
     pub fn load_profiles(&self) -> io::Result<Vec<crate::profiles::StreamProfile>> {
         Ok(self.read("profiles.json")?.unwrap_or_default())
     }
@@ -104,3 +128,28 @@ fn restrict_permissions(path: &Path) {
 
 #[cfg(not(unix))]
 fn restrict_permissions(_path: &Path) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_defaults_to_hearth_and_survives_reopening_the_store() {
+        let dir = std::env::temp_dir().join(format!("hestia-appearance-test-{}", std::process::id()));
+        let store = Store::open(&dir).unwrap();
+        assert_eq!(store.load_theme().unwrap(), AppearanceTheme::Hearth);
+        store.save_theme(AppearanceTheme::Daylight).unwrap();
+        assert_eq!(
+            Store::open(&dir).unwrap().load_theme().unwrap(),
+            AppearanceTheme::Daylight
+        );
+        store.save_theme(AppearanceTheme::Midnight).unwrap();
+        assert_eq!(
+            Store::open(&dir).unwrap().load_theme().unwrap(),
+            AppearanceTheme::Midnight
+        );
+        fs::write(dir.join("appearance.json"), r#"{"theme":"future-theme"}"#).unwrap();
+        assert_eq!(store.load_theme().unwrap(), AppearanceTheme::Hearth);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

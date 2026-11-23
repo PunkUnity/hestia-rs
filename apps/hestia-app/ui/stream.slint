@@ -501,7 +501,7 @@ export component StreamView inherits Rectangle {
             padding: 24px;
             if root.title != "": Text {
                 text: root.title;
-                color: Theme.text;
+                color: #f5eee8;
                 font-size: Theme.display-size;
                 font-weight: 700;
                 horizontal-alignment: center;
@@ -511,6 +511,7 @@ export component StreamView inherits Rectangle {
                 alignment: center;
                 Loader {
                     dot: 10px;
+                    tint: #ff7a2e;
                 }
             }
             HorizontalLayout {
@@ -520,7 +521,7 @@ export component StreamView inherits Rectangle {
                     horizontal-alignment: center;
                     wrap: word-wrap;
                     text: root.status;
-                    color: Theme.muted;
+                    color: #ab9f95;
                     font-size: Theme.body-size + 1px;
                 }
             }

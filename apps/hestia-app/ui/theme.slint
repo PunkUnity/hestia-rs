@@ -40,26 +40,110 @@ export global Nav {
     in-out property <bool> keyboard;
 }
 
+struct ThemePalette {
+    bg: color,
+    surface: color,
+    card: color,
+    card-hover: color,
+    border: color,
+    text: color,
+    muted: color,
+    faint: color,
+    accent: color,
+    accent-hover: color,
+    accent-pressed: color,
+    on-accent: color,
+    glow: color,
+    ok: color,
+    warn: color,
+    danger: color,
+    info: color,
+    scrim: color,
+}
+
 export global Theme {
-    // Palette
-    out property <color> bg: #110e0c;           // soot
-    out property <color> surface: #1a1613;      // ash: bars, sheets, menus
-    out property <color> card: #231e1a;         // coal: groups, tiles
-    out property <color> card-hover: #2e2823;
-    out property <color> border: #3b332c;       // seams
-    out property <color> text: #f5eee8;         // bone
-    out property <color> muted: #ab9f95;        // smoke
-    out property <color> faint: #71675f;        // cinder
-    out property <color> accent: #ff7a2e;       // ember
-    out property <color> accent-hover: #ff9a57;
-    out property <color> accent-pressed: #e3631d;
-    out property <color> on-accent: #1f0c02;
-    out property <color> glow: #ff7a2e80;
-    out property <color> ok: #67d491;
-    out property <color> warn: #f5b43f;
-    out property <color> danger: #ff6868;
-    out property <color> info: #9ec5ea;
-    out property <color> scrim: #0a0807c8;
+    in-out property <int> selection;
+    // Color roles belong to the palette. Font and control metrics are separate.
+    property <ThemePalette> palette: root.selection == 2 ? root.midnight : root.selection == 1 ? root.daylight : root.hearth;
+    property <ThemePalette> hearth: {
+        bg: #110e0c,
+        surface: #1a1613,
+        card: #231e1a,
+        card-hover: #2e2823,
+        border: #3b332c,
+        text: #f5eee8,
+        muted: #ab9f95,
+        faint: #71675f,
+        accent: #ff7a2e,
+        accent-hover: #ff9a57,
+        accent-pressed: #e3631d,
+        on-accent: #1f0c02,
+        glow: #ff7a2e80,
+        ok: #67d491,
+        warn: #f5b43f,
+        danger: #ff6868,
+        info: #9ec5ea,
+        scrim: #0a0807c8,
+    };
+    property <ThemePalette> daylight: {
+        bg: #edf2f9,
+        surface: #f8fafd,
+        card: #ffffff,
+        card-hover: #e5ebf9,
+        border: #bdc9df,
+        text: #172238,
+        muted: #44536d,
+        faint: #586984,
+        accent: #3b4e9d,
+        accent-hover: #4359af,
+        accent-pressed: #2c3b7d,
+        on-accent: #ffffff,
+        glow: #415ab74d,
+        ok: #176848,
+        warn: #795000,
+        danger: #aa2642,
+        info: #254d93,
+        scrim: #172238a8,
+    };
+    property <ThemePalette> midnight: {
+        bg: #141620,
+        surface: #1c1e29,
+        card: #252736,
+        card-hover: #303344,
+        border: #4b4d63,
+        text: #f0edf7,
+        muted: #c5bfd5,
+        faint: #aba5bf,
+        accent: #c1a2ff,
+        accent-hover: #d2baff,
+        accent-pressed: #ae8be9,
+        on-accent: #21143b,
+        glow: #ac82ff66,
+        ok: #83d8a8,
+        warn: #f1bb79,
+        danger: #ff9eb5,
+        info: #9ec6fa,
+        scrim: #0b0c16c9,
+    };
+
+    out property <color> bg: root.palette.bg;
+    out property <color> surface: root.palette.surface;
+    out property <color> card: root.palette.card;
+    out property <color> card-hover: root.palette.card-hover;
+    out property <color> border: root.palette.border;
+    out property <color> text: root.palette.text;
+    out property <color> muted: root.palette.muted;
+    out property <color> faint: root.palette.faint;
+    out property <color> accent: root.palette.accent;
+    out property <color> accent-hover: root.palette.accent-hover;
+    out property <color> accent-pressed: root.palette.accent-pressed;
+    out property <color> on-accent: root.palette.on-accent;
+    out property <color> glow: root.palette.glow;
+    out property <color> ok: root.palette.ok;
+    out property <color> warn: root.palette.warn;
+    out property <color> danger: root.palette.danger;
+    out property <color> info: root.palette.info;
+    out property <color> scrim: root.palette.scrim;
     out property <string> font: "Outfit";
 
     // The window's size (set by the window). Phones in portrait are
