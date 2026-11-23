@@ -192,6 +192,7 @@ export component AppWindow inherits Window {
     in-out property <int> cfg-resolution: 1;
     in-out property <int> cfg-fps: 1;
     in-out property <float> cfg-bitrate: 20;
+    in-out property <float> cfg-metered-bitrate: 0;
     in property <[string]> cfg-codec-options;
     in-out property <int> cfg-codec: 0;
     in-out property <int> cfg-audio: 0;
@@ -635,6 +636,7 @@ export component AppWindow inherits Window {
             resolution <=> root.cfg-resolution;
             fps <=> root.cfg-fps;
             bitrate-mbps <=> root.cfg-bitrate;
+            metered-bitrate-mbps <=> root.cfg-metered-bitrate;
             codec <=> root.cfg-codec;
             audio <=> root.cfg-audio;
             hdr <=> root.cfg-hdr;

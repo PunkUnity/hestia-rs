@@ -444,6 +444,7 @@ impl View for SlintView<'_> {
         w.set_cfg_resolution(form.resolution);
         w.set_cfg_fps(form.fps);
         w.set_cfg_bitrate(form.bitrate_mbps);
+        w.set_cfg_metered_bitrate(form.metered_bitrate_mbps);
         w.set_cfg_codec(form.codec);
         w.set_cfg_audio(form.audio);
         w.set_cfg_hdr(form.hdr);
@@ -472,6 +473,7 @@ impl View for SlintView<'_> {
             resolution: w.get_cfg_resolution(),
             fps: w.get_cfg_fps(),
             bitrate_mbps: w.get_cfg_bitrate(),
+            metered_bitrate_mbps: w.get_cfg_metered_bitrate(),
             codec: w.get_cfg_codec(),
             audio: w.get_cfg_audio(),
             hdr: w.get_cfg_hdr(),

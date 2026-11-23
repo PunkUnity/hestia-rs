@@ -1330,6 +1330,7 @@ export component SettingsPage inherits Page {
     in-out property <int> resolution;
     in-out property <int> fps;
     in-out property <float> bitrate-mbps;
+    in-out property <float> metered-bitrate-mbps;
     in-out property <int> codec;
     in-out property <int> audio;
     in-out property <bool> hdr;
@@ -1373,7 +1374,8 @@ export component SettingsPage inherits Page {
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…7, Direct video (19), 8…18, saved profiles (100…), 20…23.
+    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
+    // saved profiles (100…), 20…23.
     property <int> nav: -1;
     focus-first => {
         if (root.nav == -1) {
@@ -1411,6 +1413,8 @@ export component SettingsPage inherits Page {
         return (i != 8 || root.mediacodec || root.gpu-conversion) && (i != 10 || root.android);
     }
     pure function step(from: int, dir: int) -> int {
+        if (from == 24) { return dir > 0 ? 5 : 4; }
+        if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
         if (root.mediacodec && ((from == 7 && dir > 0) || (from == 8 && dir < 0))) { return 19; }
         let p = root.pos(from) + dir;
@@ -1626,6 +1630,19 @@ export component SettingsPage inherits Page {
                             moved(v) => {
                                 root.preset = 0;
                             }
+                        }
+                        if root.android: SliderRow {
+                            label: "Metered bitrate";
+                            hint: "Lower the video bitrate request on metered networks";
+                            value-text: root.metered-bitrate-mbps == 0 ? "Off" : root.metered-bitrate-mbps + " Mbps";
+                            minimum: 0;
+                            maximum: 50;
+                            step: 0.5;
+                            key-step: 0.5;
+                            value <=> root.metered-bitrate-mbps;
+                            want-focus: root.at(24);
+                            nav(k) => { return root.move(24, k); }
+                            entered => { root.nav = 24; }
                         }
                         ChoiceRow {
                             label: "Codec";

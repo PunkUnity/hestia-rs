@@ -164,6 +164,7 @@ pub struct SettingsForm {
     pub resolution: i32,
     pub fps: i32,
     pub bitrate_mbps: f32,
+    pub metered_bitrate_mbps: f32,
     pub codec: i32,
     pub audio: i32,
     pub hdr: bool,

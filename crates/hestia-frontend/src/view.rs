@@ -205,6 +205,7 @@ pub fn settings_form(s: &StreamSettings, native: Option<(u32, u32, u32)>) -> Set
         resolution: index(sizes.iter().position(|&m| m == (s.width, s.height))),
         fps: index(rates.iter().position(|&f| f == s.fps)),
         bitrate_mbps: s.bitrate_kbps as f32 / 1000.0,
+        metered_bitrate_mbps: s.metered_bitrate_kbps as f32 / 1000.0,
         codec_options: client_codecs()
             .map(|codec| match codec {
                 CodecPreference::PyroWave => "PyroWave (SDR)".into(),
@@ -254,6 +255,11 @@ pub fn settings_from_form(form: &SettingsForm, base: &StreamSettings) -> StreamS
         height,
         fps,
         bitrate_kbps: bitrate_from_mbps(form.bitrate_mbps),
+        metered_bitrate_kbps: if form.metered_bitrate_mbps > 0.0 {
+            bitrate_from_mbps(form.metered_bitrate_mbps)
+        } else {
+            0
+        },
         preset: Preset::ALL[pick(form.preset, Preset::ALL.len())],
         video_scale: VIDEO_SCALES[pick(form.video_scale, VIDEO_SCALES.len())],
         codec: client_codecs().nth(form.codec.max(0) as usize).unwrap_or_default(),
@@ -344,6 +350,7 @@ mod mode_tests {
         let native = Some((2400, 1080, 120));
         let mut s = StreamSettings::default();
         (s.width, s.height, s.fps, s.bitrate_kbps) = (2400, 1080, 120, 46_250);
+        s.metered_bitrate_kbps = 2_500;
         s.hdr = true;
         s.gpu_video = false;
         s.direct_video = false;

@@ -1,13 +1,16 @@
 //! Android network selection for LAN hosts.
 
-use hestia_core::stream::StreamConfig;
+use std::net::{IpAddr, ToSocketAddrs};
+
+use hestia_core::stream::{SessionUrl, StreamConfig};
 use jni::JNIEnv;
-use jni::objects::{JObject, JValue};
+use jni::objects::{JByteArray, JObject, JValue};
 
 use super::android::with_activity;
 
 const TRANSPORT_CELLULAR: i32 = 0;
 const TRANSPORT_VPN: i32 = 4;
+const NET_CAPABILITY_NOT_METERED: i32 = 11;
 const NET_CAPABILITY_NOT_VPN: i32 = 15;
 const NETWORK_SIG: &str = "(Landroid/net/Network;)";
 
@@ -25,8 +28,116 @@ fn connectivity_manager<'local>(
     .l()
 }
 
-/// Private host addresses can be reached through an Android VPN or
-/// cellular network. Use the WAN packet size and QoS settings on either.
+fn stream_network<'local>(env: &mut JNIEnv<'local>, cm: &JObject<'_>) -> jni::errors::Result<JObject<'local>> {
+    // Honor an explicit Wi-Fi binding even when the default is cellular.
+    let network = env
+        .call_method(cm, "getBoundNetworkForProcess", "()Landroid/net/Network;", &[])?
+        .l()?;
+    if network.is_null() {
+        env.call_method(cm, "getActiveNetwork", "()Landroid/net/Network;", &[])?
+            .l()
+    } else {
+        Ok(network)
+    }
+}
+
+fn network_capabilities<'local>(
+    env: &mut JNIEnv<'local>,
+    cm: &JObject<'_>,
+    network: &JObject<'_>,
+) -> jni::errors::Result<JObject<'local>> {
+    if network.is_null() {
+        return Ok(JObject::null());
+    }
+    env.call_method(
+        cm,
+        "getNetworkCapabilities",
+        format!("{NETWORK_SIG}Landroid/net/NetworkCapabilities;"),
+        &[JValue::Object(network)],
+    )?
+    .l()
+}
+
+/// Compare the RTSP destination with the network's DNS64 synthesis prefix.
+fn uses_nat64(
+    env: &mut JNIEnv<'_>,
+    cm: &JObject<'_>,
+    network: &JObject<'_>,
+    url: &SessionUrl,
+) -> jni::errors::Result<bool> {
+    if network.is_null() || env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()? < 30 {
+        return Ok(false);
+    }
+    let link = env
+        .call_method(
+            cm,
+            "getLinkProperties",
+            format!("{NETWORK_SIG}Landroid/net/LinkProperties;"),
+            &[JValue::Object(network)],
+        )?
+        .l()?;
+    if link.is_null() {
+        return Ok(false);
+    }
+    let prefix = env
+        .call_method(&link, "getNat64Prefix", "()Landroid/net/IpPrefix;", &[])?
+        .l()?;
+    if prefix.is_null() {
+        return Ok(false);
+    }
+    let target = url.host.parse::<IpAddr>().ok().or_else(|| {
+        (url.host.as_str(), url.port)
+            .to_socket_addrs()
+            .ok()?
+            .next()
+            .map(|a| a.ip())
+    });
+    let Some(IpAddr::V6(target)) = target else {
+        return Ok(false);
+    };
+    let octets = env.byte_array_from_slice(&target.octets())?;
+    let address = env
+        .call_static_method(
+            "java/net/InetAddress",
+            "getByAddress",
+            "([B)Ljava/net/InetAddress;",
+            &[JValue::Object(&octets)],
+        )?
+        .l()?;
+    env.call_method(
+        &prefix,
+        "contains",
+        "(Ljava/net/InetAddress;)Z",
+        &[JValue::Object(&address)],
+    )?
+    .z()
+}
+
+pub(crate) fn stream_network_metered() -> Option<bool> {
+    let mut metered = None;
+    if let Err(e) = with_activity(|env, activity| {
+        let cm = connectivity_manager(env, activity)?;
+        let network = stream_network(env, &cm)?;
+        let caps = network_capabilities(env, &cm, &network)?;
+        if !caps.is_null() {
+            metered = Some(
+                !env.call_method(
+                    &caps,
+                    "hasCapability",
+                    "(I)Z",
+                    &[JValue::Int(NET_CAPABILITY_NOT_METERED)],
+                )?
+                .z()?,
+            );
+        }
+        Ok(())
+    }) {
+        log::debug!("could not check Android network metering: {e}");
+    }
+    metered
+}
+
+/// Use WAN packet size and QoS on Android VPNs, cellular and NAT64 paths.
 pub(crate) fn configure_stream_network(mut config: StreamConfig) -> StreamConfig {
     if config.streaming_remotely {
         return config;
@@ -34,27 +145,8 @@ pub(crate) fn configure_stream_network(mut config: StreamConfig) -> StreamConfig
     let mut remote = false;
     let result = with_activity(|env, activity| {
         let cm = connectivity_manager(env, activity)?;
-        // A process explicitly routed to local Wi-Fi can use the LAN
-        // settings even when Android's default is cellular.
-        let mut network = env
-            .call_method(&cm, "getBoundNetworkForProcess", "()Landroid/net/Network;", &[])?
-            .l()?;
-        if network.is_null() {
-            network = env
-                .call_method(&cm, "getActiveNetwork", "()Landroid/net/Network;", &[])?
-                .l()?;
-        }
-        if network.is_null() {
-            return Ok(());
-        }
-        let caps = env
-            .call_method(
-                &cm,
-                "getNetworkCapabilities",
-                format!("{NETWORK_SIG}Landroid/net/NetworkCapabilities;"),
-                &[JValue::Object(&network)],
-            )?
-            .l()?;
+        let network = stream_network(env, &cm)?;
+        let caps = network_capabilities(env, &cm, &network)?;
         if !caps.is_null() {
             remote = env
                 .call_method(&caps, "hasTransport", "(I)Z", &[JValue::Int(TRANSPORT_CELLULAR)])?
@@ -66,6 +158,9 @@ pub(crate) fn configure_stream_network(mut config: StreamConfig) -> StreamConfig
                     .call_method(&caps, "hasCapability", "(I)Z", &[JValue::Int(NET_CAPABILITY_NOT_VPN)])?
                     .z()?;
         }
+        if !remote {
+            remote = uses_nat64(env, &cm, &network, &config.session_url)?;
+        }
         Ok(())
     });
     if let Err(e) = result {
@@ -74,7 +169,7 @@ pub(crate) fn configure_stream_network(mut config: StreamConfig) -> StreamConfig
         config.streaming_remotely = true;
         config.packet_size = StreamConfig::WAN_PACKET_SIZE;
         log::info!(
-            "Android stream uses cellular or VPN; using WAN packet size {}",
+            "Android stream uses cellular, VPN or NAT64; using WAN packet size {}",
             config.packet_size
         );
     }
@@ -109,7 +204,7 @@ pub fn route_for(addr: &std::net::SocketAddr) {
 }
 
 fn apply_route(ip: std::net::IpAddr) -> Result<(), String> {
-    use jni::objects::{JByteArray, JObjectArray};
+    use jni::objects::JObjectArray;
 
     use crate::netroute::{self, NetInfo};
 

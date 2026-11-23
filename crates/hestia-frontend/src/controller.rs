@@ -744,6 +744,28 @@ impl Controller {
                 let (mut settings, profile) = core.settings_for_host(&id);
                 // Apply this build's supported choices to imported profiles as well.
                 settings.codec = view::client_codec(settings.codec);
+                #[cfg(target_os = "android")]
+                if settings.metered_bitrate_kbps != 0 {
+                    if let Ok(host) = core.host(&id)
+                        && let Ok(ip) = host.address.parse::<std::net::IpAddr>()
+                    {
+                        platform::route_for(&std::net::SocketAddr::new(ip, host.http_port));
+                    }
+                    let metered = platform::stream_network_metered();
+                    let mut report = report::lock(&session_report);
+                    report.field("Settings", "normal bitrate", format!("{} kbps", settings.bitrate_kbps));
+                    report.field(
+                        "Settings",
+                        "metered bitrate ceiling",
+                        format!("{} kbps", settings.metered_bitrate_kbps),
+                    );
+                    report.field(
+                        "Settings",
+                        "metered network",
+                        metered.map_or("unknown", |v| if v { "yes" } else { "no" }),
+                    );
+                    settings.bitrate_kbps = settings.bitrate_for_network(metered == Some(true));
+                }
                 if let Some(name) = profile {
                     info!("launching with stream profile “{name}”");
                     report::lock(&session_report).field("Settings", "profile", name);

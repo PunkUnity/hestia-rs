@@ -163,6 +163,8 @@ pub struct StreamSettings {
     pub height: u32,
     pub fps: u32,
     pub bitrate_kbps: u32,
+    /// Android's request ceiling on metered connections. Zero uses the normal bitrate.
+    pub metered_bitrate_kbps: u32,
     pub codec: CodecPreference,
     pub hdr: bool,
     pub audio: AudioLayout,
@@ -213,6 +215,7 @@ impl Default for StreamSettings {
             height: 1080,
             fps: 60,
             bitrate_kbps: 20_000,
+            metered_bitrate_kbps: 0,
             codec: CodecPreference::Auto,
             hdr: false,
             audio: AudioLayout::Stereo,
@@ -238,6 +241,14 @@ impl Default for StreamSettings {
 }
 
 impl StreamSettings {
+    pub fn bitrate_for_network(&self, metered: bool) -> u32 {
+        if metered && self.metered_bitrate_kbps != 0 {
+            self.bitrate_kbps.min(self.metered_bitrate_kbps)
+        } else {
+            self.bitrate_kbps
+        }
+    }
+
     /// The touch mode, from the old trackpad switch when never chosen.
     pub fn touch(&self) -> TouchMode {
         self.touch_mode.unwrap_or(if self.touch_trackpad {
@@ -313,6 +324,20 @@ mod tests {
         assert_eq!(partial.fps, 120);
         assert_eq!(partial.codec, CodecPreference::Av1);
         assert_eq!(partial.width, 1920);
+        assert_eq!(partial.bitrate_for_network(true), partial.bitrate_kbps);
+    }
+
+    #[test]
+    fn metered_bitrate_only_lowers_the_request_on_metered_networks() {
+        let mut settings = StreamSettings {
+            bitrate_kbps: 20_000,
+            metered_bitrate_kbps: 2_500,
+            ..StreamSettings::default()
+        };
+        assert_eq!(settings.bitrate_for_network(true), 2_500);
+        assert_eq!(settings.bitrate_for_network(false), 20_000);
+        settings.bitrate_kbps = 1_000;
+        assert_eq!(settings.bitrate_for_network(true), 1_000);
     }
 
     #[test]
