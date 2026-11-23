@@ -436,6 +436,11 @@ impl Controller {
         #[cfg(target_os = "android")]
         {
             hestia_media::direct_video::set_wanted(direct);
+            hestia_media::pacing::set_mode(match launched.settings.frame_pacing {
+                hestia_core::FramePacing::Balanced => hestia_media::pacing::Pacing::Balanced,
+                hestia_core::FramePacing::MinLatency => hestia_media::pacing::Pacing::MinLatency,
+                hestia_core::FramePacing::MaxSmoothness => hestia_media::pacing::Pacing::MaxSmoothness,
+            });
         }
         if direct {
             platform::set_direct_video(true, config.width, config.height, config.fps);

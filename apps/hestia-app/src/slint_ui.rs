@@ -458,6 +458,7 @@ impl View for SlintView<'_> {
         w.set_cfg_hardware_decoding(form.hardware_decoding);
         w.set_cfg_gpu_video(form.gpu_video);
         w.set_cfg_direct_video(form.direct_video);
+        w.set_cfg_frame_pacing(form.frame_pacing);
         w.set_cfg_orientation(form.orientation);
     }
     fn settings_form(&self) -> SettingsForm {
@@ -487,6 +488,7 @@ impl View for SlintView<'_> {
             hardware_decoding: w.get_cfg_hardware_decoding(),
             gpu_video: w.get_cfg_gpu_video(),
             direct_video: w.get_cfg_direct_video(),
+            frame_pacing: w.get_cfg_frame_pacing(),
             orientation: w.get_cfg_orientation(),
         }
     }

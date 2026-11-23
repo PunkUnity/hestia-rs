@@ -12,7 +12,7 @@ use hestia_stream::sink::VideoCodec;
 use log::{info, warn};
 use ndk::media::image_reader::{AcquireResult, Image, ImageFormat, ImageReader};
 use ndk::media::media_codec::{
-    DequeuedInputBufferResult, DequeuedOutputBufferInfoResult, MediaCodec, MediaCodecDirection,
+    DequeuedInputBufferResult, DequeuedOutputBufferInfoResult, MediaCodec, MediaCodecDirection, OutputBuffer,
 };
 use ndk::media::media_format::MediaFormat;
 use ndk::native_window::NativeWindow;
@@ -26,6 +26,7 @@ use crate::color::{Colorimetry, Yuv420, yuv420_to_rgba};
 use crate::decode::{DecodeStats, DecodedFrame, FrameBuffer, FrameDecoder, FrameTiming};
 use crate::gpu_video::{GpuOutput, GpuPicture, SharedReader};
 use crate::native_picture::NativePicture;
+use crate::pacing::{Pacing, Schedule, VsyncClock};
 use crate::{EncodedFrame, VideoFormat};
 
 /// Bound time spent feeding one frame when the codec is under pressure.
@@ -97,6 +98,11 @@ struct Running {
     /// its generation, to follow it when the helper replaces it.
     direct: Option<(u64, Option<NativeWindow>)>,
     direct_measurement: Option<crate::direct_video::Measurement>,
+    /// Direct output: how frames are paced to the display.
+    pacing: Pacing,
+    schedule: Schedule,
+    /// Balanced pacing's vsync times.
+    vsync: Option<VsyncClock>,
 }
 
 // SAFETY: see the type's documentation.
@@ -278,10 +284,17 @@ impl MediaCodecDecoder {
         let direct_measurement = stats
             .filter(|_| direct.is_some())
             .map(|stats| crate::direct_video::measure(&codec, stats.clone(), fps));
+        let pacing = crate::pacing::mode();
+        let vsync = (direct.is_some() && pacing == Pacing::Balanced).then(VsyncClock::start);
         codec.start().map_err(|e| format!("start {mime}: {e:?}"))?;
         info!(
-            "MediaCodec {} {w}x{h}@{fps} started ({output:?} output)",
-            component.unwrap_or(mime)
+            "MediaCodec {} {w}x{h}@{fps} started ({output:?} output{})",
+            component.unwrap_or(mime),
+            if direct.is_some() {
+                format!(", {} pacing", pacing.label())
+            } else {
+                String::new()
+            }
         );
         Ok(Running {
             codec,
@@ -296,6 +309,9 @@ impl MediaCodecDecoder {
             rendered: VecDeque::with_capacity(MAX_PENDING_FRAMES),
             direct: direct.map(|(generation, window)| (generation, Some(window))),
             direct_measurement,
+            pacing,
+            schedule: Schedule::default(),
+            vsync,
         })
     }
 
@@ -588,7 +604,10 @@ impl Running {
             *current = window;
         }
         let visible = self.direct.as_ref().is_some_and(|(_, window)| window.is_some());
-        let mut newest = None;
+        // Balanced keeps up to two frames from one drain, as Hestia Android's
+        // queue; the other modes show only the newest.
+        let keep = if self.pacing == Pacing::Balanced { 2 } else { 1 };
+        let mut ready: VecDeque<(OutputBuffer<'_>, FrameTiming)> = VecDeque::with_capacity(keep + 1);
         loop {
             match self.codec.dequeue_output_buffer(Duration::ZERO) {
                 Ok(DequeuedOutputBufferInfoResult::Buffer(buffer)) => {
@@ -606,7 +625,9 @@ impl Running {
                     if visible && let Some(measurement) = &self.direct_measurement {
                         measurement.output(timing.codec_output_at);
                     }
-                    if let Some((older, _)) = newest.replace((buffer, timing)) {
+                    ready.push_back((buffer, timing));
+                    if ready.len() > keep {
+                        let (older, _) = ready.pop_front().expect("more than kept");
                         record_superseded(stats, 1);
                         let release = self.codec.release_output_buffer(older, false);
                         if let Some(measurement) = &self.direct_measurement {
@@ -631,25 +652,48 @@ impl Running {
                 Ok(DequeuedOutputBufferInfoResult::OutputBuffersChanged) => {}
                 Ok(DequeuedOutputBufferInfoResult::TryAgainLater) => break,
                 Err(e) => {
-                    if let Some((buffer, _)) = newest {
+                    for (buffer, _) in ready {
                         let _ = self.codec.release_output_buffer(buffer, false);
                     }
                     return Err(format!("output buffer: {e:?}"));
                 }
             }
         }
-        let Some((buffer, timing)) = newest else {
+        let mut newest = None;
+        while let Some((buffer, timing)) = ready.pop_front() {
+            let pts = buffer.info().presentation_time_us();
+            if visible && let Some(measurement) = &self.direct_measurement {
+                measurement.expect_callback(pts);
+            }
+            let release = if !visible {
+                self.codec.release_output_buffer(buffer, false)
+            } else {
+                match self.pacing {
+                    Pacing::MinLatency => self.codec.release_output_buffer(buffer, true),
+                    // A zero timestamp: the display shows every frame given.
+                    Pacing::MaxSmoothness => self.codec.release_output_buffer_at_time(buffer, 0),
+                    Pacing::Balanced => match self.vsync.as_ref().and_then(VsyncClock::latest) {
+                        Some((vsync, period)) => {
+                            let target = self
+                                .schedule
+                                .next(monotonic_ns(), vsync, period, self.frame_us as i64 * 1000);
+                            self.codec
+                                .release_output_buffer_at_time(buffer, Schedule::release_time(target, period))
+                        }
+                        // No vsync times yet: show it at once.
+                        None => self.codec.release_output_buffer(buffer, true),
+                    },
+                }
+            };
+            if let Some(measurement) = &self.direct_measurement {
+                measurement.release_result(pts, visible, release.is_ok());
+            }
+            release.map_err(|e| format!("release output: {e:?}"))?;
+            newest = Some(timing);
+        }
+        let Some(timing) = newest else {
             return Ok(None);
         };
-        let pts = buffer.info().presentation_time_us();
-        if visible && let Some(measurement) = &self.direct_measurement {
-            measurement.expect_callback(pts);
-        }
-        let release = self.codec.release_output_buffer(buffer, visible);
-        if let Some(measurement) = &self.direct_measurement {
-            measurement.release_result(pts, visible, release.is_ok());
-        }
-        release.map_err(|e| format!("release output: {e:?}"))?;
         out.width = self.width as u32;
         out.height = self.height as u32;
         out.buffer = FrameBuffer::Direct;
@@ -704,6 +748,15 @@ impl Running {
         }
         Ok(Some(timing))
     }
+}
+
+/// CLOCK_MONOTONIC in nanoseconds, the Choreographer's and the display's
+/// clock.
+fn monotonic_ns() -> i64 {
+    let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `now` is a valid timespec to write to.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+    now.tv_sec as i64 * 1_000_000_000 + now.tv_nsec as i64
 }
 
 fn record_superseded(stats: Option<&DecodeStats>, count: u64) {
@@ -843,6 +896,7 @@ impl FrameDecoder for MediaCodecDecoder {
         // to the reader cannot be mistaken for an output from the new IDR.
         running.pending.clear();
         running.rendered.clear();
+        running.schedule.reset();
         self.last_output = None;
         self.last_input = None;
         Ok(())

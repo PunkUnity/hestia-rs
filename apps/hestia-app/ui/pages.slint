@@ -1347,6 +1347,8 @@ export component SettingsPage inherits Page {
     in-out property <bool> hardware-decoding;
     in-out property <bool> gpu-video;
     in-out property <bool> direct-video;
+    // 0 Balanced, 1 Min latency, 2 Max smoothness (FramePacing)
+    in-out property <int> frame-pacing;
     in property <bool> android;
     in property <bool> touch-controls;
     // The PyroWave decoder renders planar frames, including on Android.
@@ -1368,13 +1370,14 @@ export component SettingsPage inherits Page {
     property <[string]> preset-names: ["Custom", "Fast", "Balanced", "Quality", "Battery saver"];
     in property <[string]> codec-names;
     property <[string]> scale-names: ["Fit", "Fill", "Stretch"];
+    property <[string]> pacing-names: ["Balanced", "Min latency", "Max smoothness"];
     property <[string]> orientation-names: ["Landscape", "Portrait", "Follow the device"];
     property <[string]> speaker-names: ["Stereo", "5.1 surround", "7.1 surround"];
     property <string> custom-text;
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
+    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), Frame pacing (25), 8…18,
     // saved profiles (100…), 20…23.
     property <int> nav: -1;
     focus-first => {
@@ -1415,7 +1418,9 @@ export component SettingsPage inherits Page {
     pure function step(from: int, dir: int) -> int {
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
-        if (from == 19) { return dir > 0 ? 8 : 7; }
+        if (from == 25) { return dir > 0 ? 8 : 19; }
+        if (from == 19) { return dir > 0 ? (root.direct-video ? 25 : 8) : 7; }
+        if (root.mediacodec && root.direct-video && from == 8 && dir < 0) { return 25; }
         if (root.mediacodec && ((from == 7 && dir > 0) || (from == 8 && dir < 0))) { return 19; }
         let p = root.pos(from) + dir;
         let last = 22 + root.profile-count;
@@ -1467,6 +1472,8 @@ export component SettingsPage inherits Page {
             root.codec = i;
         } else if (id == 9) {
             root.video-scale = i;
+        } else if (id == 25) {
+            root.frame-pacing = i;
         } else if (id == 10) {
             root.orientation = i;
         } else if (id == 15) {
@@ -1695,6 +1702,17 @@ export component SettingsPage inherits Page {
                             want-focus: root.at(19);
                             nav(k) => { return root.move(19, k); }
                             entered => { root.nav = 19; }
+                        }
+                        if root.mediacodec && root.direct-video: ChoiceRow {
+                            label: "Frame pacing";
+                            hint: root.frame-pacing == 0 ? "One frame per refresh, timed to the display, with a frame of buffer for jitter"
+                                : (root.frame-pacing == 1 ? "Each frame goes on screen as soon as it's decoded" : "Shows every frame the decoder releases, never dropped by the display");
+                            options: root.pacing-names;
+                            index <=> root.frame-pacing;
+                            want-focus: root.at(25);
+                            nav(k) => { return root.move(25, k); }
+                            entered => { root.nav = 25; }
+                            open => { root.sheet = 25; }
                         }
                         if root.mediacodec: SwitchRow {
                             label: "Zero-copy video";
@@ -1988,11 +2006,11 @@ export component SettingsPage inherits Page {
         width: 100%;
         height: 100%;
         title: root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
-            : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : "Speakers";
+            : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 25 ? "Frame pacing" : root.sheet == 10 ? "Orientation" : "Speakers";
         options: root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
-            : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
+            : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 25 ? root.pacing-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
         current: root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
-            : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.audio;
+            : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 25 ? root.frame-pacing : root.sheet == 10 ? root.orientation : root.audio;
         picked(i) => {
             root.choose(root.sheet, i);
             root.sheet = -1;
