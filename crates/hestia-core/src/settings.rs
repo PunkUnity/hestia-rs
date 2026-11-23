@@ -193,6 +193,11 @@ pub struct StreamSettings {
     /// conversion). Desktop: the GPU converts the software decoder's YUV to
     /// RGB. Off: pictures are converted to RGBA on the CPU.
     pub gpu_video: bool,
+    /// Android: the decoder renders straight to its own surface behind the
+    /// window, and the system composes it (as Moonlight does), instead of
+    /// the picture going through the UI's frame. Off, or when that surface
+    /// can't be set up: the zero-copy or CPU path above.
+    pub direct_video: bool,
     /// Touch mode; unset in settings saved before it existed, which only
     /// had `touch_trackpad` (see [`StreamSettings::touch`]).
     pub touch_mode: Option<TouchMode>,
@@ -224,6 +229,7 @@ impl Default for StreamSettings {
             show_menu_button: !cfg!(target_os = "android"),
             hardware_decoding: true,
             gpu_video: true,
+            direct_video: true,
             touch_mode: None,
             onscreen_controller: false,
             orientation: StreamOrientation::Landscape,
@@ -276,6 +282,7 @@ impl StreamSettings {
         let on = if self.gpu_video { "on" } else { "off" };
         if cfg!(target_os = "android") {
             r.field("Settings", "zero-copy video", on);
+            r.field("Settings", "direct video", if self.direct_video { "on" } else { "off" });
         } else {
             r.field("Settings", "GPU colour conversion", on);
         }

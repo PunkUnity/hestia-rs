@@ -135,6 +135,11 @@ fn load_helper(
             sig: "(I)V".into(),
             fn_ptr: native_delete_before as *mut std::ffi::c_void,
         },
+        jni::NativeMethod {
+            name: "nativeVideoSurface".into(),
+            sig: "(Landroid/view/Surface;)V".into(),
+            fn_ptr: native_video_surface as *mut std::ffi::c_void,
+        },
     ];
     env.register_native_methods(&class, &methods)?;
     log::info!("Android helper loaded");
@@ -158,5 +163,19 @@ extern "system" fn native_delete_before(
 ) {
     if count > 0 {
         ime_event(ImeEvent::DeleteBefore(count as usize));
+    }
+}
+
+/// The direct video surface appeared or went away (UI thread; the decoder
+/// thread picks it up).
+extern "system" fn native_video_surface(
+    env: jni::JNIEnv<'_>,
+    _class: jni::objects::JClass<'_>,
+    surface: jni::objects::JObject<'_>,
+) {
+    // SAFETY: called by the VM on this thread with its JNIEnv and a local
+    // reference to a Surface, or null.
+    unsafe {
+        hestia_media::direct_video::set_surface_from_java(env.get_raw().cast(), surface.as_raw().cast());
     }
 }

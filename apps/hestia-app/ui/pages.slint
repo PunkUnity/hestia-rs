@@ -1345,6 +1345,7 @@ export component SettingsPage inherits Page {
     in-out property <bool> show-menu-button;
     in-out property <bool> hardware-decoding;
     in-out property <bool> gpu-video;
+    in-out property <bool> direct-video;
     // Settings that only exist on Android.
     in property <bool> android;
     // 0 landscape, 1 portrait, 2 follow the device
@@ -1667,6 +1668,12 @@ export component SettingsPage inherits Page {
                             entered => {
                                 root.nav = 7;
                             }
+                        }
+                        // Not in the remote's row order yet (touch only).
+                        if root.android && root.hardware-decoding: SwitchRow {
+                            label: "Direct video";
+                            hint: "The decoder draws straight to the screen, paced by the display. Turn off to draw video through the app's own frame";
+                            checked <=> root.direct-video;
                         }
                         if root.android && root.hardware-decoding: SwitchRow {
                             label: "Zero-copy video";

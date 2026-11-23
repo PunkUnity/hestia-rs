@@ -39,6 +39,8 @@ const MAX_PENDING_FRAMES: usize = 32;
 const FAILURES_BEFORE_FALLBACK: u32 = 3;
 const OUTPUT_STALL: Duration = Duration::from_secs(1);
 const BUFFER_FLAG_CODEC_CONFIG: u32 = 2;
+/// How long the decoder waits for the direct video surface at start.
+const DIRECT_SURFACE_WAIT: Duration = Duration::from_millis(1500);
 
 // MediaCodecInfo.CodecCapabilities colour formats.
 const COLOR_YUV420_PLANAR: i32 = 19;
@@ -52,6 +54,9 @@ const COLOR_QCOM_YUV420_SEMI_PLANAR_32M: i32 = 0x7FA3_0C04;
 /// Where the codec puts its pictures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Output {
+    /// The direct video surface behind the window: the system shows the
+    /// pictures, the UI draws nothing (see `direct_video`).
+    Direct,
     /// GPU buffers the UI draws directly (zero-copy).
     Gpu,
     /// An image reader's surface, read on the CPU.
@@ -88,6 +93,9 @@ struct Running {
     pending: VecDeque<(u64, FrameTiming)>,
     /// Output in release order, awaiting an image from the reader.
     rendered: VecDeque<(u64, FrameTiming)>,
+    /// Direct output: the surface rendered to (None while it's gone) and
+    /// its generation, to follow it when the helper replaces it.
+    direct: Option<(u64, Option<NativeWindow>)>,
 }
 
 // SAFETY: see the type's documentation.
@@ -196,6 +204,14 @@ impl MediaCodecDecoder {
         };
         let mut codec = create_codec()?;
         let (w, h) = (width as i32, height as i32);
+        let direct = match output {
+            Output::Direct => {
+                let (generation, window) =
+                    crate::direct_video::wait_for_surface(DIRECT_SURFACE_WAIT).ok_or("no direct video surface")?;
+                Some((generation, window))
+            }
+            _ => None,
+        };
         let reader = match output {
             // A few buffers: one being drawn, one waiting, the codec's own.
             Output::Gpu => Some(
@@ -205,7 +221,7 @@ impl MediaCodecDecoder {
             Output::Images => {
                 Some(ImageReader::new(w, h, ImageFormat::YUV_420_888, 4).map_err(|e| format!("image reader: {e:?}"))?)
             }
-            Output::Buffers => None,
+            Output::Buffers | Output::Direct => None,
         };
         let images = match reader {
             Some(reader) => {
@@ -221,12 +237,15 @@ impl MediaCodecDecoder {
             }
             media
         };
-        match &images {
-            Some((_, window)) => codec
+        match (&images, &direct) {
+            (_, Some((_, window))) => codec
+                .configure(&media(None), Some(window), MediaCodecDirection::Decoder)
+                .map_err(|e| format!("configure {mime} for direct video: {e:?}"))?,
+            (Some((_, window)), None) => codec
                 .configure(&media(None), Some(window), MediaCodecDirection::Decoder)
                 .map_err(|e| format!("configure {mime}: {e:?}"))?,
             // NV12 if the codec will convert to it (Codec2 does), else its own.
-            None => {
+            (None, None) => {
                 if codec
                     .configure(
                         &media(Some(COLOR_YUV420_SEMI_PLANAR)),
@@ -244,6 +263,9 @@ impl MediaCodecDecoder {
                 }
             }
         }
+        if direct.is_some() {
+            crate::direct_video::measure(&codec);
+        }
         codec.start().map_err(|e| format!("start {mime}: {e:?}"))?;
         info!(
             "MediaCodec {} {w}x{h}@{fps} started ({output:?} output)",
@@ -260,6 +282,7 @@ impl MediaCodecDecoder {
             frame_us: (1_000_000 / u64::from(fps.max(1))).max(1),
             pending: VecDeque::with_capacity(MAX_PENDING_FRAMES),
             rendered: VecDeque::with_capacity(MAX_PENDING_FRAMES),
+            direct: direct.map(|(generation, window)| (generation, Some(window))),
         })
     }
 
@@ -337,7 +360,10 @@ impl MediaCodecDecoder {
         {
             output.retire();
         }
+        let gpu = self.gpu_output.as_ref().is_some_and(|output| output.available());
         let outputs: &[_] = match self.running.as_ref().map(|r| r.output) {
+            Some(Output::Direct) if gpu => &[Output::Gpu, Output::Images, Output::Buffers],
+            Some(Output::Direct) => &[Output::Images, Output::Buffers],
             Some(Output::Gpu) => &[Output::Images, Output::Buffers],
             Some(Output::Images) => &[Output::Buffers],
             Some(Output::Buffers) | None => &[],
@@ -515,12 +541,91 @@ impl Running {
         Ok(())
     }
 
+    /// Direct output: the newest decoded picture goes to the surface now and
+    /// the system shows it at the next refresh; older ones finished in the
+    /// same pass are skipped (never shown out of order). While the surface
+    /// is gone (app in the background) pictures are dropped.
+    fn drain_direct(
+        &mut self,
+        out: &mut DecodedFrame,
+        stats: Option<&DecodeStats>,
+    ) -> Result<Option<FrameTiming>, String> {
+        let (generation, window) = crate::direct_video::current();
+        if let Some((have, current)) = &mut self.direct
+            && *have != generation
+        {
+            if let Some(window) = &window {
+                self.codec
+                    .set_output_surface(window)
+                    .map_err(|e| format!("direct video surface: {e:?}"))?;
+                info!("direct video: following the new surface");
+            }
+            *have = generation;
+            *current = window;
+        }
+        let visible = self.direct.as_ref().is_some_and(|(_, window)| window.is_some());
+        let mut newest = None;
+        loop {
+            match self.codec.dequeue_output_buffer(Duration::ZERO) {
+                Ok(DequeuedOutputBufferInfoResult::Buffer(buffer)) => {
+                    let pts = buffer.info().presentation_time_us() as u64;
+                    let timing = (buffer.info().flags() & BUFFER_FLAG_CODEC_CONFIG == 0)
+                        .then(|| Self::take_timing(&mut self.pending, pts))
+                        .flatten();
+                    let Some(mut timing) = timing else {
+                        self.codec
+                            .release_output_buffer(buffer, false)
+                            .map_err(|e| format!("release output: {e:?}"))?;
+                        continue;
+                    };
+                    timing.codec_output_at = Instant::now();
+                    if let Some((older, _)) = newest.replace((buffer, timing)) {
+                        record_superseded(stats, 1);
+                        self.codec
+                            .release_output_buffer(older, false)
+                            .map_err(|e| format!("release output: {e:?}"))?;
+                    }
+                }
+                Ok(DequeuedOutputBufferInfoResult::OutputFormatChanged) => {
+                    let format = self.codec.output_format();
+                    info!(
+                        "MediaCodec output: {}x{} colour format {:?} (direct)",
+                        format.i32("width").unwrap_or(0),
+                        format.i32("height").unwrap_or(0),
+                        format.i32("color-format")
+                    );
+                }
+                Ok(DequeuedOutputBufferInfoResult::OutputBuffersChanged) => {}
+                Ok(DequeuedOutputBufferInfoResult::TryAgainLater) => break,
+                Err(e) => {
+                    if let Some((buffer, _)) = newest {
+                        let _ = self.codec.release_output_buffer(buffer, false);
+                    }
+                    return Err(format!("output buffer: {e:?}"));
+                }
+            }
+        }
+        let Some((buffer, timing)) = newest else {
+            return Ok(None);
+        };
+        self.codec
+            .release_output_buffer(buffer, visible)
+            .map_err(|e| format!("release output: {e:?}"))?;
+        out.width = self.width as u32;
+        out.height = self.height as u32;
+        out.buffer = FrameBuffer::Direct;
+        Ok(Some(timing))
+    }
+
     fn poll_picture(
         &mut self,
         out: &mut DecodedFrame,
         colorimetry: Colorimetry,
         stats: Option<&DecodeStats>,
     ) -> Result<Option<FrameTiming>, String> {
+        if self.output == Output::Direct {
+            return self.drain_direct(out, stats);
+        }
         if self.images.is_none() {
             return self.drain_buffers(colorimetry, out, stats);
         }
@@ -617,6 +722,7 @@ impl FrameDecoder for MediaCodecDecoder {
             return "OpenH264 (software; MediaCodec failed)";
         }
         match self.running.as_ref().map(|r| r.output) {
+            Some(Output::Direct) => "MediaCodec (hardware, direct to the display)",
             Some(Output::Gpu) => "MediaCodec (hardware, zero-copy to the GPU)",
             Some(Output::Buffers) => "MediaCodec (hardware, buffer output)",
             _ => "MediaCodec (hardware)",
@@ -633,10 +739,12 @@ impl FrameDecoder for MediaCodecDecoder {
     fn configure(&mut self, format: VideoFormat, width: u32, height: u32, fps: u32) -> Result<(), String> {
         self.config = Some((format, width, height, fps));
         self.fatal = None;
-        let outputs: &[_] = if self.gpu_output.as_ref().is_some_and(|output| output.available()) {
-            &[Output::Gpu, Output::Images, Output::Buffers]
-        } else {
-            &[Output::Images, Output::Buffers]
+        let gpu = self.gpu_output.as_ref().is_some_and(|output| output.available());
+        let outputs: &[_] = match (crate::direct_video::wanted(), gpu) {
+            (true, true) => &[Output::Direct, Output::Gpu, Output::Images, Output::Buffers],
+            (true, false) => &[Output::Direct, Output::Images, Output::Buffers],
+            (false, true) => &[Output::Gpu, Output::Images, Output::Buffers],
+            (false, false) => &[Output::Images, Output::Buffers],
         };
         self.start_output(outputs, "could not initialize video output")
     }

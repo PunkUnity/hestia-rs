@@ -204,6 +204,7 @@ pub fn settings_form(s: &StreamSettings, native: Option<(u32, u32, u32)>) -> Set
         show_menu_button: s.show_menu_button,
         hardware_decoding: s.hardware_decoding,
         gpu_video: s.gpu_video,
+        direct_video: s.direct_video,
         orientation: index(
             hestia_core::StreamOrientation::ALL
                 .iter()
@@ -252,6 +253,7 @@ pub fn settings_from_form(form: &SettingsForm, base: &StreamSettings) -> StreamS
         show_menu_button: form.show_menu_button,
         hardware_decoding: form.hardware_decoding,
         gpu_video: form.gpu_video,
+        direct_video: form.direct_video,
         orientation: hestia_core::StreamOrientation::ALL
             [pick(form.orientation, hestia_core::StreamOrientation::ALL.len())],
         ..base.clone()
@@ -325,6 +327,7 @@ mod mode_tests {
         (s.width, s.height, s.fps, s.bitrate_kbps) = (2400, 1080, 120, 46_250);
         s.hdr = true;
         s.gpu_video = false;
+        s.direct_video = false;
         s.orientation = hestia_core::StreamOrientation::Portrait;
         s.launch_mode = LaunchMode::Gamescope;
         let form = settings_form(&s, native);
