@@ -225,6 +225,7 @@ pub fn settings_form(s: &StreamSettings, native: Option<(u32, u32, u32)>) -> Set
         hardware_decoding: s.hardware_decoding,
         gpu_video: s.gpu_video,
         direct_video: s.direct_video,
+        frame_pacing: s.frame_pacing.index(),
         orientation: index(
             hestia_core::StreamOrientation::ALL
                 .iter()
@@ -279,6 +280,7 @@ pub fn settings_from_form(form: &SettingsForm, base: &StreamSettings) -> StreamS
         hardware_decoding: form.hardware_decoding,
         gpu_video: form.gpu_video,
         direct_video: form.direct_video,
+        frame_pacing: hestia_core::FramePacing::ALL[pick(form.frame_pacing, hestia_core::FramePacing::ALL.len())],
         orientation: hestia_core::StreamOrientation::ALL
             [pick(form.orientation, hestia_core::StreamOrientation::ALL.len())],
         ..base.clone()
@@ -354,6 +356,7 @@ mod mode_tests {
         s.hdr = true;
         s.gpu_video = false;
         s.direct_video = false;
+        s.frame_pacing = hestia_core::FramePacing::MaxSmoothness;
         s.orientation = hestia_core::StreamOrientation::Portrait;
         s.launch_mode = LaunchMode::Gamescope;
         let form = settings_form(&s, native);

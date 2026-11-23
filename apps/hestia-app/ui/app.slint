@@ -209,6 +209,7 @@ export component AppWindow inherits Window {
     in-out property <bool> cfg-hardware-decoding: true;
     in-out property <bool> cfg-gpu-video: true;
     in-out property <bool> cfg-direct-video: true;
+    in-out property <int> cfg-frame-pacing: 0;
     in property <[string]> cfg-profile-names;
     in-out property <int> cfg-profile-pick;
     callback settings-save-profile(string);
@@ -655,6 +656,7 @@ export component AppWindow inherits Window {
             hardware-decoding <=> root.cfg-hardware-decoding;
             gpu-video <=> root.cfg-gpu-video;
             direct-video <=> root.cfg-direct-video;
+            frame-pacing <=> root.cfg-frame-pacing;
             android: root.is-android;
             touch-controls: root.has-touch-input;
             orientation <=> root.cfg-orientation;

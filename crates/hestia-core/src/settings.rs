@@ -94,6 +94,38 @@ impl VideoScale {
     }
 }
 
+/// When Android direct video shows each decoded frame (Hestia Android's
+/// frame pacing modes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FramePacing {
+    /// One frame per display refresh, timed to vsync, with up to one frame
+    /// held back to smooth over network jitter.
+    #[default]
+    Balanced,
+    /// The newest frame goes on screen as soon as it is decoded.
+    MinLatency,
+    /// Every frame the decoder releases is shown, none dropped by the
+    /// display.
+    MaxSmoothness,
+}
+
+impl FramePacing {
+    pub const ALL: [Self; 3] = [Self::Balanced, Self::MinLatency, Self::MaxSmoothness];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Balanced => "Balanced",
+            Self::MinLatency => "Min latency",
+            Self::MaxSmoothness => "Max smoothness",
+        }
+    }
+
+    pub fn index(self) -> i32 {
+        Self::ALL.iter().position(|&p| p == self).unwrap_or(0) as i32
+    }
+}
+
 /// What a finger on the stream does (Artemis' mouse modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -200,6 +232,8 @@ pub struct StreamSettings {
     /// the picture going through the UI's frame. Off, or when that surface
     /// can't be set up: the zero-copy or CPU path above.
     pub direct_video: bool,
+    /// How direct video paces frames to the display.
+    pub frame_pacing: FramePacing,
     /// Touch mode; unset in settings saved before it existed, which only
     /// had `touch_trackpad` (see [`StreamSettings::touch`]).
     pub touch_mode: Option<TouchMode>,
@@ -233,6 +267,7 @@ impl Default for StreamSettings {
             hardware_decoding: true,
             gpu_video: true,
             direct_video: true,
+            frame_pacing: FramePacing::Balanced,
             touch_mode: None,
             onscreen_controller: false,
             orientation: StreamOrientation::Landscape,
@@ -294,6 +329,7 @@ impl StreamSettings {
         if cfg!(target_os = "android") {
             r.field("Settings", "zero-copy video", on);
             r.field("Settings", "direct video", if self.direct_video { "on" } else { "off" });
+            r.field("Settings", "frame pacing", self.frame_pacing.label());
         } else {
             r.field("Settings", "GPU colour conversion", on);
         }

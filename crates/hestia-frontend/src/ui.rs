@@ -178,6 +178,8 @@ pub struct SettingsForm {
     pub hardware_decoding: bool,
     pub gpu_video: bool,
     pub direct_video: bool,
+    /// `FramePacing` index.
+    pub frame_pacing: i32,
     pub orientation: i32,
 }
 
