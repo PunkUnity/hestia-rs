@@ -77,9 +77,12 @@ impl Schedule {
             None => soonest,
         };
         // Behind by more than the queue allows (a burst after a stall):
-        // start again from the next refresh rather than build latency.
+        // share the last frame's refresh, so the display shows this newer
+        // frame in its place (Hestia Android drops its oldest queued frame).
+        // Never earlier than a frame already released: Android shows
+        // buffers in release order.
         if target - now > MAX_AHEAD_FRAMES * frame_ns + period {
-            target = soonest;
+            return self.last_target.unwrap_or(soonest);
         }
         self.last_target = Some(target);
         target
@@ -277,12 +280,19 @@ mod tests {
             targets.windows(2).take(2).all(|w| w[1] - w[0] == 2 * P120),
             "{targets:?}"
         );
-        // No more than about two frames ahead: the fourth starts over.
+        // No more than about two frames ahead: later ones share the last
+        // refresh instead of building latency.
         assert!(
             targets.iter().all(|t| t - now <= MAX_AHEAD_FRAMES * F60 + P120),
             "{targets:?}"
         );
-        assert_eq!(targets[3], vsync + P120, "{targets:?}");
+        assert_eq!(targets[3], targets[2], "{targets:?}");
+        assert_eq!(targets[4], targets[2], "{targets:?}");
+        // Release times never go backwards.
+        assert!(targets.windows(2).all(|w| w[1] >= w[0]), "{targets:?}");
+        // Once caught up, the next frame follows on.
+        let later = s.next(targets[2], vsync, P120, F60);
+        assert_eq!(later, targets[2] + 2 * P120);
     }
 
     #[test]
