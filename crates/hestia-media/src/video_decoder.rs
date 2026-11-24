@@ -96,8 +96,10 @@ pub fn probe_android_decoder(
     colorimetry: Colorimetry,
     candidates: Vec<(crate::VideoCodec, String)>,
     output: Option<Arc<GpuOutput>>,
+    balanced_pacing: bool,
 ) -> Option<DecoderChoice> {
-    MediaCodecDecoder::with_components(colorimetry, candidates, output).map(mediacodec_choice)
+    MediaCodecDecoder::with_components(colorimetry, candidates, output)
+        .map(|decoder| mediacodec_choice(decoder.with_balanced_pacing(balanced_pacing)))
 }
 
 #[cfg(target_os = "android")]
@@ -107,7 +109,7 @@ pub fn decoder_with_android_capabilities(
     output: Option<Arc<GpuOutput>>,
 ) -> Result<DecoderChoice, String> {
     select_decoder(colorimetry, true, |colorimetry| {
-        probe_android_decoder(colorimetry, candidates, output)
+        probe_android_decoder(colorimetry, candidates, output, false)
     })
 }
 

@@ -45,7 +45,7 @@ pub use hestia_stream as stream;
 pub use hostaddr::HostAddress;
 pub use presets::Preset;
 pub use settings::{
-    AudioLayout, CodecPreference, LaunchMode, StreamOrientation, StreamSettings, TouchMode, VideoScale,
+    AudioLayout, CodecPreference, FramePacing, LaunchMode, StreamOrientation, StreamSettings, TouchMode, VideoScale,
 };
 pub use store::Store;
 

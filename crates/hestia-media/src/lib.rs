@@ -50,6 +50,8 @@ pub mod native_picture;
 pub mod null;
 #[cfg(feature = "audio")]
 pub mod opus_decode;
+#[cfg(any(target_os = "android", test))]
+mod pacing;
 pub mod picture_mailbox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod pyrowave;

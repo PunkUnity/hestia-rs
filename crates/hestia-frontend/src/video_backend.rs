@@ -51,7 +51,12 @@ impl StreamVideo {
                         log::warn!("could not check Android video decoders: {e}");
                         Vec::new()
                     });
-                probe_android_decoder(colorimetry, candidates, gpu.clone())
+                probe_android_decoder(
+                    colorimetry,
+                    candidates,
+                    gpu.clone(),
+                    settings.frame_pacing == hestia_core::FramePacing::Balanced,
+                )
             },
             // Android's renderer draws hardware buffers only: OpenH264
             // (the fallback) converts on the CPU.
