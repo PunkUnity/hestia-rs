@@ -11,12 +11,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use hestia_core::diagnostics_overlay::OverlayMetric;
 use hestia_frontend::Controller;
 use hestia_frontend::ui::{self, Modifiers, Screen, SettingsForm, UiHandle, UiTask, View};
 use hestia_media::DecodedFrame;
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
 
-use crate::{AppCard, AppWindow, CommandRow, HostCard, PadControl, PreflightRow};
+use crate::{AppCard, AppWindow, CommandRow, HostCard, OverlayOption, PadControl, PreflightRow};
 
 /// Runs the controller's tasks on Slint's event loop.
 pub(crate) struct SlintUi {
@@ -362,6 +363,13 @@ impl View for SlintView<'_> {
     fn set_stream_stats(&self, text: String) {
         self.0.set_stream_stats(text.into());
     }
+    fn diagnostics_overlay_saved(&self, saved: bool) {
+        self.0.set_overlay_saving(false);
+        self.0.set_overlay_save_failed(!saved);
+        if saved && self.screen() == Screen::DiagnosticsOverlay {
+            self.set_screen(Screen::Settings);
+        }
+    }
     fn set_stream_status(&self, text: String) {
         self.0.set_stream_status(text.into());
     }
@@ -634,6 +642,26 @@ pub(crate) fn wire(ui: &AppWindow, controller: &Arc<Controller>) {
 
     let c = controller.clone();
     ui.on_open_settings(move || c.open_settings());
+    let c = controller.clone();
+    ui.on_load_overlay_options(move || {
+        let preferences = c.diagnostics_overlay();
+        let options: Vec<_> = OverlayMetric::ALL
+            .into_iter()
+            .map(|metric| OverlayOption {
+                label: metric.label().into(),
+                enabled: preferences.shows(metric),
+            })
+            .collect();
+        ModelRc::new(VecModel::from(options))
+    });
+    let c = controller.clone();
+    ui.on_save_overlay_options(move |options| {
+        let mut preferences = c.diagnostics_overlay();
+        for (metric, option) in OverlayMetric::ALL.into_iter().zip(options.iter()) {
+            preferences.set_visible(metric, option.enabled);
+        }
+        c.save_diagnostics_overlay(preferences);
+    });
     // TV remotes: whether the D-pad moves the focus between controls (form
     // screens) or stays arrow keys (grids, the stream). Slint's Android
     // backend does the moving.

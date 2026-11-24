@@ -1,9 +1,11 @@
 import { Theme, Nav, Icon, ActionButton, Loader, TextField, Modal, DialogTitle, DialogText } from "theme.slint";
 import { HostCard, AppCard, CommandRow, PreflightRow, HostsPage, AppsPage, SessionPage, SettingsPage, ToolsPage, ReportPage } from "pages.slint";
+import { DiagnosticsOverlayPage, OverlayOption } from "pages.slint";
 import { StreamView, PadControl } from "stream.slint";
 
 export { HostCard, AppCard, CommandRow, PreflightRow } from "pages.slint";
 export { PadControl } from "stream.slint";
+export { OverlayOption } from "pages.slint";
 
 export component AppWindow inherits Window {
     title: "Hestia";
@@ -31,7 +33,7 @@ export component AppWindow inherits Window {
     }
 
     // 0 = hosts, 1 = apps, 2 = session (launching / errors), 3 = settings, 4 = stream, 5 = host tools,
-    // 6 = stream report
+    // 6 = stream report, 7 = diagnostics overlay settings
     in-out property <int> screen: 0;
 
     // Startup (identity generation on first run)
@@ -238,6 +240,13 @@ export component AppWindow inherits Window {
     property <int> settings-return: 0;
     callback open-settings();
     callback save-settings();
+    property <bool> returning-from-overlay;
+    property <length> settings-scroll-y;
+    property <[OverlayOption]> overlay-draft;
+    in-out property <bool> overlay-saving;
+    in-out property <bool> overlay-save-failed;
+    callback load-overlay-options() -> [OverlayOption];
+    callback save-overlay-options([OverlayOption]);
 
     // Escape (and the Android back key) closes dialogs and walks back
     // through the screens.
@@ -263,6 +272,12 @@ export component AppWindow inherits Window {
         }
         if (root.screen == 3) {
             root.screen = root.settings-return;
+            return true;
+        }
+        if (root.screen == 7) {
+            if (!root.overlay-saving) {
+                root.screen = 3;
+            }
             return true;
         }
         if (root.screen == 5 || root.screen == 6) {
@@ -415,6 +430,7 @@ export component AppWindow inherits Window {
             }
             settings => {
                 root.settings-return = root.screen;
+                root.returning-from-overlay = false;
                 root.screen = 3;
                 root.open-settings();
             }
@@ -442,6 +458,7 @@ export component AppWindow inherits Window {
             }
             settings => {
                 root.settings-return = 1;
+                root.returning-from-overlay = false;
                 root.screen = 3;
                 root.open-settings();
             }
@@ -652,6 +669,8 @@ export component AppWindow inherits Window {
             width: 100%;
             height: 100%;
             refocus: root.nav-refocus;
+            focus-overlay: root.returning-from-overlay;
+            initial-scroll-y: root.returning-from-overlay ? root.settings-scroll-y : 0px;
             enter-dir: root.slide-dir(1);
             init => {
                 root.page-depth = 1;
@@ -714,12 +733,39 @@ export component AppWindow inherits Window {
             open-app-log => {
                 root.open-app-log();
             }
+            open-overlay(scroll-y) => {
+                root.overlay-draft = root.load-overlay-options();
+                root.overlay-save-failed = false;
+                root.returning-from-overlay = true;
+                root.settings-scroll-y = scroll-y;
+                root.screen = 7;
+            }
             back => {
                 root.screen = root.settings-return;
             }
             save => {
                 root.save-settings();
                 root.screen = root.settings-return;
+            }
+        }
+
+        if root.screen == 7: DiagnosticsOverlayPage {
+            width: 100%;
+            height: 100%;
+            enter-dir: root.slide-dir(2);
+            init => {
+                root.page-depth = 2;
+            }
+            options: root.overlay-draft;
+            saving: root.overlay-saving;
+            save-failed: root.overlay-save-failed;
+            back => {
+                root.go-back();
+            }
+            save => {
+                root.overlay-saving = true;
+                root.overlay-save-failed = false;
+                root.save-overlay-options(root.overlay-draft);
             }
         }
 

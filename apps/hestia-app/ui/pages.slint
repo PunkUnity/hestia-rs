@@ -1402,6 +1402,9 @@ export component SettingsPage inherits Page {
     callback save;
     callback open-last-report;
     callback open-app-log;
+    callback open-overlay(length);
+    in property <bool> focus-overlay;
+    in property <length> initial-scroll-y;
 
     property <[string]> preset-names: ["Custom", "Fast", "Balanced", "Quality", "Battery saver"];
     in property <[string]> codec-names;
@@ -1413,11 +1416,11 @@ export component SettingsPage inherits Page {
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
     // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
-    // saved profiles (100…), keyboard shortcuts (25…27), 20…23.
+    // saved profiles (100…), keyboard shortcuts (25…27), 20…22, overlay (28), About (23).
     property <int> nav: -1;
     focus-first => {
         if (root.nav == -1) {
-            root.nav = 0;
+            root.nav = root.focus-overlay ? 28 : 0;
         }
     }
     in property <int> refocus;
@@ -1466,6 +1469,8 @@ export component SettingsPage inherits Page {
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
         if (root.mediacodec && ((from == 7 && dir > 0) || (from == 8 && dir < 0))) { return 19; }
+        if (from == 28) { return dir > 0 ? 23 : 22; }
+        if ((from == 22 && dir > 0) || (from == 23 && dir < 0)) { return 28; }
         let p = root.pos(from) + dir;
         let last = 22 + root.profile-count + root.shortcut-count;
         if (p < 0 || p > last) {
@@ -1572,10 +1577,11 @@ export component SettingsPage inherits Page {
             }
         }
 
-        Flickable {
+        settings-scroll := Flickable {
             vertical-stretch: 1;
             content-width: self.width;
             content-height: form.preferred-height;
+            content-y: root.initial-scroll-y;
             form := HorizontalLayout {
                 width: root.width;
                 alignment: center;
@@ -2039,6 +2045,22 @@ export component SettingsPage inherits Page {
                                 root.open-app-log();
                             }
                         }
+                        ActionRow {
+                            label: "Diagnostics overlay";
+                            hint: "Choose which statistics appear while streaming";
+                            icon: "stats";
+                            value: "Open";
+                            want-focus: root.at(28);
+                            nav(k) => {
+                                return root.move(28, k);
+                            }
+                            entered => {
+                                root.nav = 28;
+                            }
+                            clicked => {
+                                root.open-overlay(settings-scroll.content-y);
+                            }
+                        }
                     }
 
                     Group {
@@ -2103,6 +2125,117 @@ export component SettingsPage inherits Page {
         }
         dismissed => {
             root.sheet = -1;
+        }
+    }
+}
+
+export struct OverlayOption {
+    label: string,
+    enabled: bool,
+}
+
+export component DiagnosticsOverlayPage inherits Page {
+    in property <[OverlayOption]> options;
+    in property <bool> saving;
+    in property <bool> save-failed;
+    callback back();
+    callback save();
+    property <int> nav: -1;
+
+    focus-first => {
+        if (root.nav == -1) {
+            root.nav = 0;
+        }
+    }
+
+    function move(from: int, key: string) -> bool {
+        if (from < 0) {
+            if (key == Key.RightArrow && from == -2) {
+                root.nav = -3;
+            } else if (key == Key.LeftArrow && from == -3) {
+                root.nav = -2;
+            } else if (key == Key.DownArrow) {
+                root.nav = 0;
+            } else {
+                return false;
+            }
+        } else if (key == Key.UpArrow) {
+            root.nav = from == 0 ? -3 : from - 1;
+        } else if (key == Key.DownArrow) {
+            root.nav = Math.min(from + 1, root.options.length - 1);
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    FocusScope {
+        width: 0px;
+        height: 0px;
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow || event.text == Key.DownArrow || event.text == Key.LeftArrow || event.text == Key.RightArrow) {
+                root.nav = 0;
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    VerticalLayout {
+        TopBar {
+            title: "Overlay metrics";
+            subtitle: "All hosts on this device";
+            back-focus: root.nav == -2;
+            back => { root.back(); }
+            back-nav(key) => { return root.move(-2, key); }
+            back-entered => { root.nav = -2; }
+
+            VerticalLayout {
+                alignment: center;
+                ActionButton {
+                    text: root.saving ? "Saving…" : "Save";
+                    icon: "check";
+                    kind: 1;
+                    enabled: !root.saving;
+                    want-focus: root.nav == -3 && !root.saving;
+                    nav(key) => { return root.move(-3, key); }
+                    entered => { root.nav = -3; }
+                    clicked => { root.save(); }
+                }
+            }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: form.preferred-height;
+            form := HorizontalLayout {
+                width: root.width;
+                alignment: center;
+                VerticalLayout {
+                    width: Math.min(760px, root.width - 2 * Theme.page-padding);
+                    padding-top: 6px;
+                    padding-bottom: 32px;
+                    spacing: 8px;
+                    if root.save-failed: Text {
+                        text: "Could not save overlay settings. Try again.";
+                        color: Theme.danger;
+                        wrap: word-wrap;
+                    }
+                    Group {
+                        for option[index] in root.options: SwitchRow {
+                            label: option.label;
+                            checked: option.enabled;
+                            enabled: !root.saving;
+                            want-focus: root.nav == index;
+                            nav(key) => { return root.move(index, key); }
+                            entered => { root.nav = index; }
+                            toggled(on) => { option.enabled = on; }
+                        }
+                    }
+                }
+            }
         }
     }
 }

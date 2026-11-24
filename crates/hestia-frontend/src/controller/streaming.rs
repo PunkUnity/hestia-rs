@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use hestia_core::TouchMode;
 use hestia_core::diagnosis::{self, Bottleneck, SpikeHistory};
+use hestia_core::diagnostics_overlay::{DiagnosticsOverlay, OverlayMetric};
 use hestia_core::report::StatsSample;
 use hestia_core::shortcuts::{ShortcutAction, Shortcuts};
 use hestia_core::stream::input::Modifiers;
@@ -170,6 +171,7 @@ struct Listener {
     last: Mutex<Option<Totals>>,
     diagnosis: Mutex<diagnosis::DiagnosisTracker>,
     report: SharedReport,
+    overlay: DiagnosticsOverlay,
     present: Arc<Presentation>,
     target_fps: u32,
     spikes: Mutex<SpikeHistory>,
@@ -315,32 +317,58 @@ impl Listener {
     }
 
     fn stats_line(&self, s: &StatsSample, verdict: &diagnosis::Diagnosis) -> String {
-        let rates = match s.direct_release_fps {
-            Some(fps) => format!("{:.0} in / {fps:.0} released fps", s.fps),
-            None => format!("{:.0} fps", s.decoded_fps.unwrap_or(s.fps)),
-        };
-        let mut line = format!(
-            "{}  ·  {rates}  ·  {:.1} Mbps  ·  RTT {} ms  ·  decode {:.1} ms{}  ·  FEC {}  ·  lost {}  ·  IDR skips {}  ·  client drops {}",
-            self.label,
-            s.mbps,
-            s.rtt_ms,
-            s.decode_ms.unwrap_or(0.0),
-            s.host_ms.map(|h| format!("  ·  host {h:.1} ms")).unwrap_or_default(),
-            s.fec_recovered,
-            s.lost_frames,
-            s.dropped_waiting_idr,
-            s.dropped.unwrap_or(0),
-        );
         let mut spikes = self.spikes.lock().unwrap_or_else(|p| p.into_inner());
         spikes.record(verdict.bottleneck);
-        if verdict.bottleneck != Bottleneck::None {
-            line += &format!("\n⚠ {} ({})", verdict.summary, verdict.key_metric);
-        }
-        if let Some(history) = spikes.summarize() {
-            line += &format!("\n{history}");
-        }
-        line
+        overlay_text(&self.overlay, s, &self.label, verdict, &spikes)
     }
+}
+
+fn overlay_text(
+    preferences: &DiagnosticsOverlay,
+    sample: &StatsSample,
+    resolution: &str,
+    verdict: &diagnosis::Diagnosis,
+    spikes: &SpikeHistory,
+) -> String {
+    use OverlayMetric::*;
+
+    let mut metrics = Vec::new();
+    let mut messages = Vec::new();
+    for metric in OverlayMetric::ALL
+        .into_iter()
+        .filter(|&metric| preferences.shows(metric))
+    {
+        let text = match metric {
+            Resolution => Some(resolution.to_owned()),
+            FrameRate => Some(match sample.direct_release_fps {
+                Some(fps) => format!("{:.0} in / {fps:.0} released fps", sample.fps),
+                None => format!("{:.0} fps", sample.decoded_fps.unwrap_or(sample.fps)),
+            }),
+            Bitrate => Some(format!("{:.1} Mbps", sample.mbps)),
+            NetworkLatency => Some(format!("RTT {} ms", sample.rtt_ms)),
+            DecodeTime => sample.decode_ms.map(|ms| format!("decode {ms:.1} ms")),
+            HostTime => sample.host_ms.map(|ms| format!("host {ms:.1} ms")),
+            RecoveredPackets => Some(format!("FEC {}", sample.fec_recovered)),
+            LostFrames => Some(format!("lost {}", sample.lost_frames)),
+            KeyframeSkips => Some(format!("IDR skips {}", sample.dropped_waiting_idr)),
+            ClientDrops => sample.dropped.map(|count| format!("client drops {count}")),
+            Warnings => {
+                if verdict.bottleneck != Bottleneck::None {
+                    messages.push(format!("⚠ {} ({})", verdict.summary, verdict.key_metric));
+                }
+                None
+            }
+            SpikeHistory => {
+                messages.extend(spikes.summarize());
+                None
+            }
+        };
+        metrics.extend(text);
+    }
+    if !metrics.is_empty() {
+        messages.insert(0, metrics.join("  ·  "));
+    }
+    messages.join("\n")
 }
 
 impl SessionListener for Listener {
@@ -461,6 +489,7 @@ impl Controller {
             last: Mutex::new(None),
             diagnosis: Mutex::default(),
             report: session_report.clone(),
+            overlay: self.diagnostics_overlay(),
             present: present.clone(),
             target_fps: config.fps,
             spikes: Mutex::new(SpikeHistory::default()),
@@ -560,8 +589,13 @@ impl Controller {
         if clipboard && launched.settings.clipboard_sync {
             self.start_clipboard_sync(generation, clipboard_host);
         }
+        let initial_stats = if listener.overlay.shows(OverlayMetric::Resolution) {
+            format!("{size} {codec}")
+        } else {
+            String::new()
+        };
         self.ui(move |ui| {
-            ui.set_stream_stats(format!("{size} {codec}"));
+            ui.set_stream_stats(initial_stats);
             ui.set_stream_pad_visible(pad);
             ui.set_stream_clipboard(clipboard);
             ui.set_stream_menu_open(false);
@@ -1298,6 +1332,41 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_can_show_only_fps_even_during_a_network_spike() {
+        let mut preferences = DiagnosticsOverlay::default();
+        let sample = StatsSample {
+            fps: 30.0,
+            direct_release_fps: Some(29.0),
+            mbps: 2.2,
+            rtt_ms: 350,
+            ..StatsSample::default()
+        };
+        let verdict = diagnosis::Diagnosis {
+            bottleneck: Bottleneck::Network,
+            summary: "Slow video arrivals",
+            key_metric: "350 ms RTT".into(),
+        };
+        let mut spikes = SpikeHistory::default();
+        spikes.record(Bottleneck::Network);
+        let format =
+            |preferences: &DiagnosticsOverlay| overlay_text(preferences, &sample, "1280×720", &verdict, &spikes);
+        let full = format(&preferences);
+        assert!(full.contains("1280×720  ·  30 in / 29 released fps  ·  2.2 Mbps  ·  RTT 350 ms"));
+        assert!(full.contains("\n⚠ Slow video arrivals (350 ms RTT)"));
+
+        for metric in OverlayMetric::ALL {
+            preferences.set_visible(metric, false);
+        }
+        assert!(format(&preferences).is_empty());
+
+        preferences.set_visible(OverlayMetric::FrameRate, true);
+        assert_eq!(format(&preferences), "30 in / 29 released fps");
+        preferences.set_visible(OverlayMetric::FrameRate, false);
+        preferences.set_visible(OverlayMetric::Warnings, true);
+        assert_eq!(format(&preferences), "⚠ Slow video arrivals (350 ms RTT)");
+    }
 
     const ALL: Modifiers = Modifiers {
         shift: true,

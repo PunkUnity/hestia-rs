@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::HostRecord;
+use crate::diagnostics_overlay::DiagnosticsOverlay;
 use crate::settings::StreamSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +86,14 @@ impl Store {
 
     pub fn save_settings(&self, settings: &StreamSettings) -> io::Result<()> {
         self.write("settings.json", settings)
+    }
+
+    pub fn load_diagnostics_overlay(&self) -> io::Result<DiagnosticsOverlay> {
+        Ok(self.read("diagnostics-overlay.json")?.unwrap_or_default())
+    }
+
+    pub fn save_diagnostics_overlay(&self, preferences: &DiagnosticsOverlay) -> io::Result<()> {
+        self.write("diagnostics-overlay.json", preferences)
     }
 
     pub fn load_profiles(&self) -> io::Result<Vec<crate::profiles::StreamProfile>> {

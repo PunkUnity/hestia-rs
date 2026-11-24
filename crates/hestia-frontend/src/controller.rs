@@ -17,6 +17,7 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+use hestia_core::diagnostics_overlay::DiagnosticsOverlay;
 use hestia_core::nvhttp::{AppInfo, PairingOutcome, PairingPin};
 use hestia_core::shortcuts::{ShortcutAction, ShortcutBinding, Shortcuts};
 use hestia_core::{DeviceInfo, HestiaClient, HostSnapshot, Preset, presets};
@@ -992,6 +993,32 @@ impl Controller {
     // ------------------------------------------------------------------
     // Settings
     // ------------------------------------------------------------------
+
+    pub fn diagnostics_overlay(&self) -> DiagnosticsOverlay {
+        self.core().map(|core| core.diagnostics_overlay()).unwrap_or_default()
+    }
+
+    pub fn save_diagnostics_overlay(self: &Shared, preferences: DiagnosticsOverlay) {
+        let c = self.clone();
+        let worker = std::thread::Builder::new()
+            .name("hestia-save-overlay".into())
+            .spawn(move || {
+                let saved = c
+                    .core()
+                    .is_some_and(|core| match core.set_diagnostics_overlay(preferences) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            warn!("could not save diagnostics overlay preferences: {e}");
+                            false
+                        }
+                    });
+                c.ui(move |ui| ui.diagnostics_overlay_saved(saved));
+            });
+        if let Err(e) = worker {
+            warn!("could not start diagnostics overlay save: {e}");
+            self.ui(|ui| ui.diagnostics_overlay_saved(false));
+        }
+    }
 
     /// Saves the settings form: the device's settings, or, opened from a
     /// host's page, that host's quality settings and the device's others.

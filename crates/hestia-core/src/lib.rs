@@ -11,6 +11,7 @@
 
 pub mod address;
 pub mod diagnosis;
+pub mod diagnostics_overlay;
 pub mod hostaddr;
 pub mod logcapture;
 pub mod presets;
@@ -652,6 +653,7 @@ pub struct HestiaClient {
     identity: Arc<ClientIdentity>,
     hosts: Mutex<Vec<HostRecord>>,
     settings: Mutex<StreamSettings>,
+    diagnostics_overlay: Mutex<diagnostics_overlay::DiagnosticsOverlay>,
 }
 
 fn now_secs() -> u64 {
@@ -684,12 +686,17 @@ impl HestiaClient {
             warn!("ignoring unreadable settings: {e}");
             StreamSettings::default()
         });
+        let diagnostics_overlay = store.load_diagnostics_overlay().unwrap_or_else(|e| {
+            warn!("ignoring unreadable diagnostics overlay preferences: {e}");
+            diagnostics_overlay::DiagnosticsOverlay::default()
+        });
         adopt_legacy_profiles(&store, &mut hosts);
         Ok(Self {
             store,
             identity: Arc::new(identity),
             hosts: Mutex::new(hosts),
             settings: Mutex::new(settings),
+            diagnostics_overlay: Mutex::new(diagnostics_overlay),
         })
     }
 
@@ -712,6 +719,20 @@ impl HestiaClient {
     pub fn set_settings(&self, settings: StreamSettings) -> Result<()> {
         self.store.save_settings(&settings)?;
         *self.settings.lock().unwrap_or_else(|p| p.into_inner()) = settings;
+        Ok(())
+    }
+
+    pub fn diagnostics_overlay(&self) -> diagnostics_overlay::DiagnosticsOverlay {
+        self.diagnostics_overlay
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    pub fn set_diagnostics_overlay(&self, preferences: diagnostics_overlay::DiagnosticsOverlay) -> Result<()> {
+        let mut saved = self.diagnostics_overlay.lock().unwrap_or_else(|p| p.into_inner());
+        self.store.save_diagnostics_overlay(&preferences)?;
+        *saved = preferences;
         Ok(())
     }
 

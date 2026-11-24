@@ -50,10 +50,11 @@ pub enum Screen {
     Tools,
     /// The last stream report.
     Report,
+    DiagnosticsOverlay,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 7] = [
+    pub const ALL: [Screen; 8] = [
         Screen::Hosts,
         Screen::Apps,
         Screen::Session,
@@ -61,6 +62,7 @@ impl Screen {
         Screen::Stream,
         Screen::Tools,
         Screen::Report,
+        Screen::DiagnosticsOverlay,
     ];
 
     /// The page's number, in [`Screen::ALL`] order.
@@ -279,6 +281,7 @@ pub trait View {
     /// Asks the toolkit to render the window again soon.
     fn request_redraw(&self);
     fn set_stream_stats(&self, text: String);
+    fn diagnostics_overlay_saved(&self, saved: bool);
     fn set_stream_status(&self, text: String);
     /// The stream's picture is on the direct video surface behind the
     /// window: the stream view leaves its area clear.
