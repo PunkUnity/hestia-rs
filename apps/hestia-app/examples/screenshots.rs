@@ -59,6 +59,7 @@ fn fake_frame(width: u32, height: u32) -> Image {
 fn fill_sample_data(ui: &AppWindow) {
     ui.set_starting(false);
     ui.set_theme_names(strings(&["Hearth (dark)", "Daylight (light)", "Midnight (dark)"]));
+    ui.set_icon_style_names(strings(&["From base theme", "Monochrome", "Colorful"]));
     ui.set_theme_part_names(strings(&[
         "From base theme",
         "Hearth (dark)",
@@ -350,7 +351,7 @@ fn main() {
     ui.set_screen(3);
     show(&window, size);
     // Down from Base theme to the bitrate slider.
-    press(&window, Key::DownArrow, 7);
+    press(&window, Key::DownArrow, 8);
     save(&window, size, &out.join("tv-settings.png"));
     // The option list of the frame rate row.
     press(&window, Key::UpArrow, 1);

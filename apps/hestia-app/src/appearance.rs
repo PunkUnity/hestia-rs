@@ -13,6 +13,7 @@ const BUILT_INS: [(&str, &str); 3] = [
     ("daylight", "Daylight (light)"),
     ("midnight", "Midnight (dark)"),
 ];
+const ICON_STYLES: [(&str, &str); 2] = [("monochrome", "Monochrome"), ("colorful", "Colorful")];
 
 fn index(id: &str) -> Option<i32> {
     BUILT_INS.iter().position(|&(entry, _)| entry == id).map(|i| i as i32)
@@ -29,6 +30,10 @@ impl From<Appearance> for AppearanceChoices {
             base: index(&appearance.base).unwrap_or(0),
             palette: override_index(appearance.palette),
             corners: override_index(appearance.corners),
+            icons: ICON_STYLES
+                .iter()
+                .position(|&(id, _)| appearance.icons.as_deref() == Some(id))
+                .map_or(0, |i| i as i32 + 1),
         }
     }
 }
@@ -40,6 +45,10 @@ pub(crate) fn configure(ui: &AppWindow, data_dir: PathBuf) {
         .chain(names)
         .collect();
     ui.set_theme_part_names(ModelRc::new(VecModel::from(parts)));
+    let icon_names: Vec<_> = std::iter::once(SharedString::from("From base theme"))
+        .chain(ICON_STYLES.map(|(_, label)| SharedString::from(label)))
+        .collect();
+    ui.set_icon_style_names(ModelRc::new(VecModel::from(icon_names)));
 
     match Store::open(&data_dir).and_then(|store| store.load_appearance()) {
         Ok(appearance) => ui.set_saved_appearance(appearance.into()),
@@ -53,6 +62,9 @@ pub(crate) fn configure(ui: &AppWindow, data_dir: PathBuf) {
             base,
             palette: source(choices.palette.saturating_sub(1)),
             corners: source(choices.corners.saturating_sub(1)),
+            icons: ICON_STYLES
+                .get(choices.icons.saturating_sub(1) as usize)
+                .map(|&(id, _)| id.into()),
         };
         match Store::open(&data_dir).and_then(|store| store.save_appearance(&appearance)) {
             Ok(()) => true,

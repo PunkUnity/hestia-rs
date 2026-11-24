@@ -86,7 +86,7 @@ component HostTile inherits Focusable {
                     width: 28px;
                     height: 28px;
                     name: root.host.paired ? "monitor" : "lock";
-                    tint: root.ready ? Theme.accent : Theme.muted;
+                    tint: root.host.online ? Theme.icon-color(self.name, root.ready ? Theme.accent : Theme.muted) : Theme.muted;
                 }
                 Rectangle {
                     x: parent.width - 12px;
@@ -513,7 +513,7 @@ component AppTile inherits Focusable {
                 width: parent.width * 0.34;
                 height: self.width;
                 name: "gamepad";
-                tint: Theme.text.transparentize(0.94);
+                tint: Theme.icon-color(self.name, Theme.text).transparentize(Theme.colorful-icons ? 0.75 : 0.94);
             }
             Text {
                 x: 14px;
@@ -1350,6 +1350,7 @@ export component SettingsPage inherits Page {
     in-out property <int> theme;
     in-out property <int> palette;
     in-out property <int> corners;
+    in-out property <int> icons;
     in property <bool> theme-save-failed;
     in property <bool> android;
     in property <bool> touch-controls;
@@ -1376,14 +1377,16 @@ export component SettingsPage inherits Page {
     property <[string]> speaker-names: ["Stereo", "5.1 surround", "7.1 surround"];
     in property <[string]> theme-names;
     in property <[string]> theme-part-names;
+    in property <[string]> icon-style-names;
     property <int> theme-row: 25;
     property <int> palette-row: 26;
     property <int> corners-row: 27;
+    property <int> icons-row: 28;
     property <string> custom-text;
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: Appearance (25…27), 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
+    // order: Appearance (25…28), 0…4, Metered bitrate (24), 5…7, Direct video (19), 8…18,
     // saved profiles (100…), 20…23.
     property <int> nav: -1;
     focus-first => {
@@ -1422,10 +1425,10 @@ export component SettingsPage inherits Page {
         return (i != 8 || root.mediacodec || root.gpu-conversion) && (i != 10 || root.android);
     }
     pure function step(from: int, dir: int) -> int {
-        if (from >= root.theme-row && from <= root.corners-row) {
-            return from == root.corners-row && dir > 0 ? 0 : Math.max(root.theme-row, from + dir);
+        if (from >= root.theme-row && from <= root.icons-row) {
+            return from == root.icons-row && dir > 0 ? 0 : Math.max(root.theme-row, from + dir);
         }
-        if (from == 0 && dir < 0) { return root.corners-row; }
+        if (from == 0 && dir < 0) { return root.icons-row; }
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
@@ -1490,6 +1493,8 @@ export component SettingsPage inherits Page {
             root.palette = i;
         } else if (id == root.corners-row) {
             root.corners = i;
+        } else if (id == root.icons-row) {
+            root.icons = i;
         }
     }
 
@@ -1559,6 +1564,7 @@ export component SettingsPage inherits Page {
                         title: "Appearance";
                         ChoiceRow {
                             label: "Base theme";
+                            leading-icon: "settings";
                             hint: root.theme-save-failed ? "Could not save the theme. Try again." : "Preview a theme, then Save to keep it";
                             options: root.theme-names;
                             index <=> root.theme;
@@ -1575,6 +1581,7 @@ export component SettingsPage inherits Page {
                         }
                         ChoiceRow {
                             label: "Palette";
+                            leading-icon: "palette";
                             options: root.theme-part-names;
                             index <=> root.palette;
                             want-focus: root.at(root.palette-row);
@@ -1584,12 +1591,23 @@ export component SettingsPage inherits Page {
                         }
                         ChoiceRow {
                             label: "Corner style";
+                            leading-icon: "aspect";
                             options: root.theme-part-names;
                             index <=> root.corners;
                             want-focus: root.at(root.corners-row);
                             nav(k) => { return root.move(root.corners-row, k); }
                             entered => { root.nav = root.corners-row; }
                             open => { root.sheet = root.corners-row; }
+                        }
+                        ChoiceRow {
+                            label: "Icon colors";
+                            leading-icon: "icons";
+                            options: root.icon-style-names;
+                            index <=> root.icons;
+                            want-focus: root.at(root.icons-row);
+                            nav(k) => { return root.move(root.icons-row, k); }
+                            entered => { root.nav = root.icons-row; }
+                            open => { root.sheet = root.icons-row; }
                         }
                     }
 
@@ -2044,13 +2062,13 @@ export component SettingsPage inherits Page {
     if root.sheet >= 0: OptionSheet {
         width: 100%;
         height: 100%;
-        title: root.sheet == root.theme-row ? "Base theme" : root.sheet == root.palette-row ? "Palette" : root.sheet == root.corners-row ? "Corner style"
+        title: root.sheet == root.theme-row ? "Base theme" : root.sheet == root.palette-row ? "Palette" : root.sheet == root.corners-row ? "Corner style" : root.sheet == root.icons-row ? "Icon colors"
             : root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
             : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : "Speakers";
-        options: root.sheet == root.theme-row ? root.theme-names : (root.sheet == root.palette-row || root.sheet == root.corners-row) ? root.theme-part-names
+        options: root.sheet == root.theme-row ? root.theme-names : (root.sheet == root.palette-row || root.sheet == root.corners-row) ? root.theme-part-names : root.sheet == root.icons-row ? root.icon-style-names
             : root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
             : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
-        current: root.sheet == root.theme-row ? root.theme : root.sheet == root.palette-row ? root.palette : root.sheet == root.corners-row ? root.corners
+        current: root.sheet == root.theme-row ? root.theme : root.sheet == root.palette-row ? root.palette : root.sheet == root.corners-row ? root.corners : root.sheet == root.icons-row ? root.icons
             : root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
             : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.audio;
         picked(i) => {

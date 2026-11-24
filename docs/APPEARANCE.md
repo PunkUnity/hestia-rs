@@ -1,6 +1,6 @@
 # Appearance and artwork
 
-Hestia's appearance is a per-device choice. A base theme supplies defaults, and each supported component can use its own source. The three built-in themes currently supply a palette and corner style. Choose **From base theme** to make a component follow the selected base again. Changes preview in Settings and apply across the app after Save. Back restores the saved appearance. Existing preferences written as `{"theme":"midnight"}` load as a base choice.
+Hestia's appearance is a per-device choice. A base theme supplies defaults, and each supported component can use its own source. The built-in themes supply a palette, corner style and icon color style. Midnight pairs near-black surfaces with bright icon accents. Each component can follow the selected base again with **From base theme**. Changes preview in Settings and apply across the app after Save. Back restores the saved appearance. Existing preferences written as `{"theme":"midnight"}` load as a base choice.
 
 ## References
 

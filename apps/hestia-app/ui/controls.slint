@@ -115,6 +115,7 @@ export component SwitchRow inherits RowBase {
 // opens the whole list (`open`).
 export component ChoiceRow inherits RowBase {
     in property <string> label;
+    in property <string> leading-icon;
     in property <string> hint;
     in property <[string]> options;
     in-out property <int> index;
@@ -149,6 +150,13 @@ export component ChoiceRow inherits RowBase {
         padding-top: 12px;
         padding-bottom: 12px;
         spacing: 12px;
+        if root.leading-icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.leading-icon;
+                tint: Theme.icon-color(root.leading-icon, Theme.muted);
+            }
+        }
         RowText {
             horizontal-stretch: 1;
             label: root.label;
@@ -323,7 +331,7 @@ export component ActionRow inherits RowBase {
             alignment: center;
             Icon {
                 name: root.icon;
-                tint: !root.enabled ? Theme.faint : (root.danger ? Theme.danger : Theme.muted);
+                tint: !root.enabled ? Theme.faint : (root.danger ? Theme.danger : Theme.icon-color(root.icon, Theme.muted));
             }
         }
         RowText {

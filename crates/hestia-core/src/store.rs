@@ -34,6 +34,8 @@ pub struct Appearance {
     pub palette: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corners: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<String>,
 }
 
 impl Default for Appearance {
@@ -42,6 +44,7 @@ impl Default for Appearance {
             base: "hearth".into(),
             palette: None,
             corners: None,
+            icons: None,
         }
     }
 }
@@ -150,6 +153,7 @@ mod tests {
         assert_eq!(appearance.corners, None);
         appearance.palette = Some("hearth".into());
         appearance.corners = Some("daylight".into());
+        appearance.icons = Some("colorful".into());
         store.save_appearance(&appearance).unwrap();
         assert_eq!(Store::open(&dir).unwrap().load_appearance().unwrap(), appearance);
         fs::remove_dir_all(dir).unwrap();
