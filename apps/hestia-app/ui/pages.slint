@@ -1391,7 +1391,7 @@ export component SettingsPage inherits Page {
     in property <bool> touch-controls;
     // The PyroWave decoder renders planar frames, including on Android.
     property <bool> mediacodec: root.android && root.hardware-decoding && root.codec != 4;
-    property <bool> show-frame-pacing: root.mediacodec && root.direct-video;
+    property <bool> direct-frame-pacing: root.mediacodec && root.direct-video;
     property <bool> gpu-conversion: !root.android || (root.hardware-decoding && root.codec == 4);
     // 0 landscape, 1 portrait, 2 follow the device
     in-out property <int> orientation;
@@ -1416,7 +1416,7 @@ export component SettingsPage inherits Page {
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), Frame pacing (29), 8, Video
+    // order: 0…3, Frame pacing (29), 4, Metered bitrate (24), 5…7, Direct video (19), 8, Video
     // through losses (28), 9…18, saved profiles (100…), keyboard shortcuts
     // (25…27), 20…23.
     property <int> nav: -1;
@@ -1467,16 +1467,16 @@ export component SettingsPage inherits Page {
             && (i != 18 || root.host-name != "");
     }
     pure function step(from: int, dir: int) -> int {
+        if (from == 29) { return dir > 0 ? 4 : 3; }
+        if (root.android && ((from == 3 && dir > 0) || (from == 4 && dir < 0))) { return 29; }
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
-        if (from == 19) { return dir > 0 ? (root.show-frame-pacing ? 29 : 8) : 7; }
-        if (from == 29) { return dir > 0 ? 8 : 19; }
+        if (from == 19) { return dir > 0 ? 8 : 7; }
         // 28 closes the Decoding group, after 8 when that row is shown.
         if (from == 28) { return dir > 0 ? 9 : root.valid(8) ? 8 : 7; }
         if (dir > 0 && (from == 8 || (from == 7 && !root.valid(8)))) { return 28; }
         if (from == 9 && dir < 0) { return 28; }
-        if (root.mediacodec && from == 7 && dir > 0) { return 19; }
-        if (root.mediacodec && from == 8 && dir < 0) { return root.show-frame-pacing ? 29 : 19; }
+        if (root.mediacodec && ((from == 7 && dir > 0) || (from == 8 && dir < 0))) { return 19; }
         let p = root.pos(from) + dir;
         let last = 22 + root.profile-count + root.shortcut-count;
         if (p < 0 || p > last) {
@@ -1673,6 +1673,18 @@ export component SettingsPage inherits Page {
                                 root.sheet = 3;
                             }
                         }
+                        if root.android: ChoiceRow {
+                            label: "Video frame pacing";
+                            hint: !root.direct-frame-pacing ? "Uses Direct video with hardware decoding on a supported codec"
+                                : root.frame-pacing == 1 ? "Times output to the display refresh" : "Releases frames as soon as they are decoded";
+                            options: root.pacing-names;
+                            index <=> root.frame-pacing;
+                            want-focus: root.at(29);
+                            nav(k) => { return root.move(29, k); }
+                            entered => { root.nav = 29; }
+                            picked(i) => { root.choose(29, i); }
+                            open => { root.sheet = 29; }
+                        }
                         SliderRow {
                             label: "Bitrate";
                             hint: "Higher looks sharper and needs a faster network";
@@ -1757,17 +1769,6 @@ export component SettingsPage inherits Page {
                             want-focus: root.at(19);
                             nav(k) => { return root.move(19, k); }
                             entered => { root.nav = 19; }
-                        }
-                        if root.show-frame-pacing: ChoiceRow {
-                            label: "Video frame pacing";
-                            hint: root.frame-pacing == 1 ? "Times output to the display refresh" : "Releases frames as soon as they are decoded";
-                            options: root.pacing-names;
-                            index <=> root.frame-pacing;
-                            want-focus: root.at(29);
-                            nav(k) => { return root.move(29, k); }
-                            entered => { root.nav = 29; }
-                            picked(i) => { root.choose(29, i); }
-                            open => { root.sheet = 29; }
                         }
                         if root.mediacodec: SwitchRow {
                             label: "Zero-copy video";
