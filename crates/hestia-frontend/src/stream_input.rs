@@ -442,9 +442,11 @@ fn trackpad_events(outputs: Vec<touch::Output>) -> impl Iterator<Item = InputEve
     })
 }
 
-pub(crate) fn key(text: &str, pressed: bool, mut modifiers: Modifiers) -> Option<InputEvent> {
+pub(crate) fn key(text: &str, pressed: bool, repeat: bool, mut modifiers: Modifiers) -> Option<InputEvent> {
     match keymap::map(text) {
-        Some(Mapped::Key { code, implied_shift }) => {
+        // The host repeats a held key. Text packets contain a complete input
+        // event, so repeated text needs to be forwarded for each press.
+        Some(Mapped::Key { code, implied_shift }) if !repeat => {
             // A printable fallback can arrive without the Shift that produced it.
             // For shortcuts, use the modifiers the toolkit actually reported.
             modifiers.shift |= implied_shift && !(modifiers.ctrl || modifiers.alt || modifiers.meta);
@@ -633,7 +635,7 @@ mod tests {
         ] {
             for pressed in [true, false] {
                 assert_eq!(
-                    super::key(text, pressed, modifiers),
+                    super::key(text, pressed, false, modifiers),
                     Some(InputEvent::Key {
                         key: code,
                         pressed,
@@ -642,6 +644,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn repeated_character_fallback_sends_text_without_repeating_held_keys() {
+        let modifiers = Modifiers::default();
+        for repeat in [false, true] {
+            assert_eq!(
+                super::key("é", true, repeat, modifiers),
+                Some(InputEvent::Text("é".into()))
+            );
+        }
+        assert_eq!(super::key("a", true, true, modifiers), None);
+        assert_eq!(super::key("é", false, false, modifiers), None);
     }
 
     #[test]

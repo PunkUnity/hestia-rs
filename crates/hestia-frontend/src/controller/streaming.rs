@@ -762,25 +762,22 @@ impl Controller {
     /// ([`Controller::stream_physical_key`]) don't come here; on-screen
     /// keyboards and keys without a position do.
     pub fn stream_key(self: &Shared, text: &str, pressed: bool, repeat: bool, modifiers: Modifiers) {
-        // The host repeats held keys itself.
-        if repeat {
+        let Some(event) = stream_input::key(text, pressed, repeat, modifiers) else {
             return;
-        }
-        if let Some(keymap::Mapped::Key { code: key, .. }) = keymap::map(text) {
+        };
+        if let InputEvent::Key { key, .. } = &event {
             let route = self
                 .active_stream()
                 .as_ref()
                 .filter(|active| active.input.focused)
-                .map_or(KeyRoute::Host, |active| active.out.route_key(key, pressed, modifiers));
+                .map_or(KeyRoute::Host, |active| active.out.route_key(*key, pressed, modifiers));
             match route {
                 KeyRoute::Host => {}
                 KeyRoute::Swallow => return,
                 KeyRoute::Run(action) => return self.run_shortcut(action),
             }
         }
-        if let Some(event) = stream_input::key(text, pressed, modifiers) {
-            self.send_input(event);
-        }
+        self.send_input(event);
     }
 
     /// A key of a physical keyboard, by its Linux input event code (`KEY_*`:
