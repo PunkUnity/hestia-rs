@@ -799,6 +799,17 @@ fn convert(
 }
 
 impl FrameDecoder for MediaCodecDecoder {
+    fn supports_reference_frame_invalidation(&self, format: VideoFormat) -> bool {
+        // Match the HEVC Exynos entries in Hestia Android's decoder capability list.
+        format.codec == VideoCodec::Hevc
+            && self
+                .components
+                .iter()
+                .find(|(codec, _)| *codec == format.codec)
+                .and_then(|(_, component)| component.as_deref())
+                .is_some_and(|name| name.starts_with("c2.exynos.") || name.starts_with("omx.exynos."))
+    }
+
     fn name(&self) -> &'static str {
         #[cfg(feature = "openh264")]
         if self.fallback.is_some() {

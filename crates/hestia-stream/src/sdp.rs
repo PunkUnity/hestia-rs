@@ -68,7 +68,11 @@ impl HostSdp {
     }
 
     pub fn supports_rfi(&self) -> bool {
-        self.raw.contains("x-nv-video[0].refPicInvalidation")
+        self.raw.lines().any(|line| {
+            line.trim()
+                .strip_prefix("a=x-nv-video[0].refPicInvalidation:")
+                .is_some_and(|value| value.trim() == "1")
+        })
     }
 
     pub fn feature_flags(&self) -> u32 {
@@ -209,6 +213,10 @@ pub struct AnnounceParams {
 
 /// Builds the ANNOUNCE body. Attribute names and order follow common-c.
 pub fn build_announce(p: &AnnounceParams) -> String {
+    build_announce_with_reference_recovery(p, false)
+}
+
+pub(crate) fn build_announce_with_reference_recovery(p: &AnnounceParams, reference_frame_invalidation: bool) -> String {
     let mut attrs: Vec<(&str, String)> = Vec::new();
     let mut a = |name: &'static str, value: String| attrs.push((name, value));
 
@@ -286,7 +294,8 @@ pub fn build_announce(p: &AnnounceParams) -> String {
     a("x-nv-video[0].dynamicRangeMode", u8::from(p.format.ten_bit).to_string());
     // Without reference frame invalidation, keep a single reference frame so
     // a lost frame only costs us until the next IDR.
-    a("x-nv-video[0].maxNumReferenceFrames", "1".into());
+    let max_refs = if reference_frame_invalidation { "0" } else { "1" };
+    a("x-nv-video[0].maxNumReferenceFrames", max_refs.into());
     a("x-nv-video[0].clientRefreshRateX100", p.refresh_rate_x100.to_string());
 
     a("x-nv-audio.surround.numChannels", p.audio_channels.to_string());
@@ -417,6 +426,18 @@ a=fmtp:97 surround-params=88001234567\n";
     }
 
     #[test]
+    fn reference_invalidation_requires_the_enabled_sdp_attribute() {
+        for sdp in [
+            "",
+            "a=x-nv-video[0].refPicInvalidation:0\r\n",
+            "a=x-nv-video[0].refPicInvalidation\r\na=other:1\r\n",
+        ] {
+            assert!(!HostSdp::new(sdp).supports_rfi());
+        }
+        assert!(HostSdp::new("a=x-nv-video[0].refPicInvalidation:1\r\n").supports_rfi());
+    }
+
+    #[test]
     fn announce_has_everything_hermes_requires() {
         let p = AnnounceParams {
             width: 1920,
@@ -443,6 +464,9 @@ a=fmtp:97 surround-params=88001234567\n";
             encoder_csc_mode: 0,
         };
         let sdp = build_announce(&p);
+        assert!(
+            build_announce_with_reference_recovery(&p, true).contains("a=x-nv-video[0].maxNumReferenceFrames:0 \r\n")
+        );
         let mut pyro_params = p;
         pyro_params.format.codec = VideoCodec::PyroWave;
         let pyro = build_announce(&pyro_params);
@@ -483,5 +507,6 @@ a=fmtp:97 surround-params=88001234567\n";
         }
         assert!(sdp.contains("a=x-nv-vqos[0].bw.maximumBitrateKbps:16000 \r\n"));
         assert!(sdp.contains("a=x-nv-general.featureFlags:135 \r\n"));
+        assert!(sdp.contains("a=x-nv-video[0].maxNumReferenceFrames:1 \r\n"));
     }
 }

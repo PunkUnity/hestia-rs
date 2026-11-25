@@ -383,6 +383,8 @@ impl Listener {
         let delta = |a: u64, b: u64| a.saturating_sub(b);
         let received = delta(now.stats.frames, prev.stats.frames);
         let skipped = delta(now.stats.dropped_waiting_idr, prev.stats.dropped_waiting_idr);
+        let skipped_rfi = delta(now.stats.dropped_waiting_rfi, prev.stats.dropped_waiting_rfi);
+        let assembled = received + skipped + skipped_rfi;
         let lost = delta(now.stats.lost_frames, prev.stats.lost_frames);
         let handoffs = delta(now.decoded, prev.decoded);
         let direct_decoded = now
@@ -411,7 +413,7 @@ impl Listener {
                 delta(now.decode_us, prev.decode_us) as f64 / handoffs as f64 / 1000.0
             },
             skipped_waiting_idr_fps: skipped as f64 / secs,
-            network_drop_pct: percent(lost, received + skipped + lost),
+            network_drop_pct: percent(lost, assembled + lost),
             rtt_ms: now.stats.rtt_ms,
             // Direct output includes frames that were never handed off.
             display_drop_pct: percent(superseded, direct_decoded.unwrap_or(handoffs + direct_superseded)),
@@ -420,7 +422,7 @@ impl Listener {
         let verdict = self.diagnosis.lock().unwrap_or_else(|p| p.into_inner()).sample(&window);
         let sample = StatsSample {
             fps: window.received_fps,
-            assembled_fps: (received + skipped) as f64 / secs,
+            assembled_fps: assembled as f64 / secs,
             mbps: delta(now.stats.bytes, prev.stats.bytes) as f64 * 8.0 / secs / 1e6,
             rtt_ms: now.stats.rtt_ms,
             rtt_variance_ms: now.stats.rtt_variance_ms,

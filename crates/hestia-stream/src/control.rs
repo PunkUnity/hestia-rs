@@ -184,6 +184,15 @@ impl ControlStream {
         self.send(PT_REQUEST_IDR, &[0, 0], CHANNEL_URGENT, Delivery::Reliable)
     }
 
+    pub(crate) fn invalidate_reference_frames(&self, first: u32, last: u32) -> io::Result<()> {
+        // The wire format is two LE frame indices in 64-bit slots plus eight reserved bytes.
+        let mut payload = [0; 24];
+        payload[..4].copy_from_slice(&first.to_le_bytes());
+        payload[8..12].copy_from_slice(&last.to_le_bytes());
+        debug!("requesting reference frame invalidation for {first}–{last}");
+        self.send(PT_INVALIDATE_REF_FRAMES, &payload, CHANNEL_URGENT, Delivery::Reliable)
+    }
+
     /// Sends an already-encoded input packet (see [`crate::input`]).
     pub fn send_input(&self, packet: &[u8], channel: u8) -> io::Result<()> {
         self.send(PT_INPUT, packet, channel, Delivery::Reliable)

@@ -2,7 +2,7 @@
 //! Reed–Solomon recovery and frame depacketization. Ported from
 //! moonlight-common-c `VideoStream.c`, `RtpVideoQueue.c` and
 //! `VideoDepacketizer.c`, simplified to "drop until the next IDR" on loss
-//! (we don't use reference frame invalidation). Experimentally, delta frames
+//! unless reference frame invalidation is negotiated. Experimentally, delta frames
 //! can keep flowing to the decoder while that IDR is on its way
 //! ([`VideoConfig::show_through_loss`]).
 //!
@@ -107,6 +107,7 @@ pub struct AssembledFrame {
     pub frame: u32,
     pub data: Vec<u8>,
     pub keyframe: bool,
+    pub after_reference_invalidation: bool,
     pub host_latency_100us: u16,
     pub received_at: Instant,
 }
@@ -117,6 +118,9 @@ pub struct AssemblerStats {
     pub recovered_packets: u64,
     pub lost_frames: u64,
     pub dropped_waiting_idr: u64,
+    pub dropped_waiting_rfi: u64,
+    pub reference_recoveries: u64,
+    pub reference_recovery_timeouts: u64,
     /// Packets that arrived for a frame already given up on (marked lost).
     pub late_packets: u64,
     /// Distinct lost frames that received at least one such late packet:
@@ -242,6 +246,15 @@ struct FrameState {
     result: Option<Option<AssembledFrame>>,
 }
 
+const REFERENCE_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const REFERENCE_RECOVERY_TIMEOUT: Duration = Duration::from_secs(2);
+
+struct ReferenceRecovery {
+    first: u32,
+    started_at: Instant,
+    last_request_at: Instant,
+}
+
 /// Reassembles frames from shards. Pure logic, no I/O. Newer frames may finish
 /// first but are emitted in sequence while the preceding frame can still arrive.
 pub struct FrameAssembler {
@@ -256,6 +269,8 @@ pub struct FrameAssembler {
     /// The decoder has no reference to decode a delta frame against: at the
     /// start, and after it asked for a keyframe itself.
     needs_keyframe: bool,
+    reference_frame_invalidation: bool,
+    reference_recovery: Option<ReferenceRecovery>,
     /// Experimental: after a transport loss, keep forwarding delta frames
     /// while the keyframe is on its way instead of holding them back. The
     /// picture smears where the lost frame changed it, until the keyframe
@@ -277,6 +292,10 @@ pub enum AssemblerOutput {
     Frame(AssembledFrame),
     /// A frame was lost; the decoder needs an IDR to recover.
     NeedIdr,
+    InvalidateReferences {
+        first: u32,
+        last: u32,
+    },
 }
 
 impl FrameAssembler {
@@ -290,6 +309,8 @@ impl FrameAssembler {
             report_fec: false,
             waiting_for_idr: true,
             needs_keyframe: true,
+            reference_frame_invalidation: false,
+            reference_recovery: None,
             show_through_loss: false,
             reorder_window: REORDER_WINDOW,
             max_reorder_window: MAX_REORDER_WINDOW,
@@ -312,6 +333,7 @@ impl FrameAssembler {
     pub fn wait_for_keyframe(&mut self) {
         self.waiting_for_idr = true;
         self.needs_keyframe = true;
+        self.reference_recovery = None;
     }
 
     pub fn add(&mut self, packet: &[u8]) -> Vec<AssemblerOutput> {
@@ -399,6 +421,16 @@ impl FrameAssembler {
 
     fn drain(&mut self, now: Instant, out: &mut Vec<AssemblerOutput>) {
         self.relax_reorder_window(now);
+        // A missing response must fall back even if new video stops arriving.
+        if self
+            .reference_recovery
+            .as_ref()
+            .is_some_and(|recovery| now.saturating_duration_since(recovery.started_at) >= REFERENCE_RECOVERY_TIMEOUT)
+        {
+            self.reference_recovery = None;
+            self.stats.reference_recovery_timeouts += 1;
+            self.request_keyframe(out);
+        }
         while let Some(first) = self.pending.first_mut() {
             let next = self.next_frame.expect("buffered frames have a sequence start");
             let number = first.number;
@@ -408,22 +440,8 @@ impl FrameAssembler {
                 self.pending.remove(0);
                 self.next_frame = Some(next.wrapping_add(1));
                 match result {
-                    Some(frame)
-                        if frame.keyframe
-                            || !self.waiting_for_idr
-                            || (self.show_through_loss && !self.needs_keyframe) =>
-                    {
-                        if frame.keyframe {
-                            self.waiting_for_idr = false;
-                            self.needs_keyframe = false;
-                        } else if self.waiting_for_idr {
-                            self.stats.shown_through_loss += 1;
-                        }
-                        self.stats.frames += 1;
-                        out.push(AssemblerOutput::Frame(frame));
-                    }
-                    Some(_) => self.stats.dropped_waiting_idr += 1,
-                    None => self.mark_lost(1, out),
+                    Some(frame) => self.finish_frame(frame, now, out),
+                    None => self.mark_lost(next, 1, now, out),
                 }
                 continue;
             }
@@ -468,8 +486,47 @@ impl FrameAssembler {
                 skipped
             };
             self.next_frame = Some(next.wrapping_add(skipped));
-            self.mark_lost(skipped, out);
+            self.mark_lost(next, skipped, now, out);
         }
+    }
+
+    fn finish_frame(&mut self, frame: AssembledFrame, now: Instant, out: &mut Vec<AssemblerOutput>) {
+        if frame.keyframe {
+            self.reference_recovery = None;
+            self.waiting_for_idr = false;
+            self.needs_keyframe = false;
+        } else if let Some(recovery) = &mut self.reference_recovery {
+            if frame.after_reference_invalidation
+                && frame.frame > recovery.first
+                && frame.received_at >= recovery.started_at
+            {
+                self.reference_recovery = None;
+                self.stats.reference_recoveries += 1;
+                debug!("video recovered with reference invalidation at frame {}", frame.frame);
+            } else {
+                self.stats.dropped_waiting_rfi += 1;
+                if frame.frame < recovery.first {
+                    // The control request cannot represent a range across sequence wrap.
+                    self.reference_recovery = None;
+                    self.request_keyframe(out);
+                } else if now.saturating_duration_since(recovery.last_request_at) >= REFERENCE_RETRY_INTERVAL {
+                    recovery.last_request_at = now;
+                    out.push(AssemblerOutput::InvalidateReferences {
+                        first: recovery.first,
+                        last: frame.frame,
+                    });
+                }
+                return;
+            }
+        } else if self.waiting_for_idr {
+            if !self.show_through_loss || self.needs_keyframe {
+                self.stats.dropped_waiting_idr += 1;
+                return;
+            }
+            self.stats.shown_through_loss += 1;
+        }
+        self.stats.frames += 1;
+        out.push(AssemblerOutput::Frame(frame));
     }
 
     fn remember_expired(&mut self, number: u32, at: Instant) {
@@ -537,11 +594,32 @@ impl FrameAssembler {
         self.stats.max_reorder_window_us = self.stats.max_reorder_window_us.max(us);
     }
 
-    fn mark_lost(&mut self, count: u32, out: &mut Vec<AssemblerOutput>) {
+    fn mark_lost(&mut self, first: u32, count: u32, now: Instant, out: &mut Vec<AssemblerOutput>) {
         self.stats.lost_frames += u64::from(count);
         if self.codec == VideoCodec::PyroWave {
             return;
         }
+        let last = first.wrapping_add(count - 1);
+        if self.reference_frame_invalidation && !self.waiting_for_idr && last >= first {
+            if let Some(recovery) = &self.reference_recovery {
+                if first >= recovery.first {
+                    return;
+                }
+            } else {
+                self.reference_recovery = Some(ReferenceRecovery {
+                    first,
+                    started_at: now,
+                    last_request_at: now,
+                });
+                out.push(AssemblerOutput::InvalidateReferences { first, last });
+                return;
+            }
+        }
+        self.reference_recovery = None;
+        self.request_keyframe(out);
+    }
+
+    fn request_keyframe(&mut self, out: &mut Vec<AssemblerOutput>) {
         self.waiting_for_idr = true;
         if !matches!(out.last(), Some(AssemblerOutput::NeedIdr)) {
             out.push(AssemblerOutput::NeedIdr);
@@ -589,6 +667,7 @@ fn depacketize_at(
             frame,
             data,
             keyframe: true,
+            after_reference_invalidation: false,
             host_latency_100us: latency,
             received_at,
         });
@@ -619,6 +698,7 @@ fn depacketize_at(
         frame,
         data,
         keyframe,
+        after_reference_invalidation: header_len == 8 && matches!(frame_type, 4 | 5),
         host_latency_100us: latency,
         received_at,
     })
@@ -670,6 +750,7 @@ pub fn is_keyframe_bitstream(data: &[u8], codec: VideoCodec) -> bool {
 #[derive(Debug, Clone)]
 pub struct VideoConfig {
     pub report_fec: bool,
+    pub reference_frame_invalidation: bool,
     pub remote: SocketAddr,
     pub ping_payload: Option<[u8; 16]>,
     pub packet_size: u32,
@@ -712,6 +793,7 @@ impl RoundTrip {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoFeedback {
     FecStatus(FrameFecStatus),
+    InvalidateReferences { first: u32, last: u32 },
     NeedIdr { loss_detected_at: Option<Instant> },
     FirstFrame,
     NoVideo,
@@ -729,6 +811,11 @@ pub struct VideoCounters {
     pub recovered: AtomicU64,
     pub lost_frames: AtomicU64,
     pub dropped_waiting_idr: AtomicU64,
+    pub dropped_waiting_rfi: AtomicU64,
+    pub reference_requests_sent: AtomicU64,
+    pub reference_request_errors: AtomicU64,
+    pub reference_recoveries: AtomicU64,
+    pub reference_recovery_timeouts: AtomicU64,
     /// See [`AssemblerStats::late_packets`] and the fields after it.
     pub late_packets: AtomicU64,
     pub late_frames: AtomicU64,
@@ -1037,6 +1124,7 @@ fn receive_loop(
     let mut assembler = FrameAssembler::new(cfg.packet_size, cfg.format.codec);
     assembler.report_fec = cfg.report_fec;
     assembler.show_through_loss = cfg.show_through_loss;
+    assembler.reference_frame_invalidation = cfg.reference_frame_invalidation;
     if cfg.show_through_loss {
         info!("video: showing delta frames through losses (experimental)");
     }
@@ -1120,6 +1208,9 @@ fn receive_loop(
             }
             Some(VideoInactivity::Probe) => {
                 debug!("video paused; probing with a keyframe request");
+                if assembler.reference_recovery.is_some() {
+                    assembler.wait_for_keyframe();
+                }
                 if let Some(reason) = idr.want(now, IdrReason::Silence) {
                     counters.recovery.request(reason, idr.loss_detected_at, emit);
                 }
@@ -1134,6 +1225,9 @@ fn receive_loop(
         for output in outputs {
             match output {
                 AssemblerOutput::FecStatus(status) => emit(VideoFeedback::FecStatus(status)),
+                AssemblerOutput::InvalidateReferences { first, last } => {
+                    emit(VideoFeedback::InvalidateReferences { first, last });
+                }
                 AssemblerOutput::NeedIdr => {
                     if let Some(reason) = idr.want(Instant::now(), IdrReason::Loss) {
                         counters.recovery.request(reason, idr.loss_detected_at, emit);
@@ -1191,6 +1285,15 @@ fn receive_loop(
         counters
             .dropped_waiting_idr
             .store(assembler.stats.dropped_waiting_idr, Ordering::Relaxed);
+        counters
+            .dropped_waiting_rfi
+            .store(assembler.stats.dropped_waiting_rfi, Ordering::Relaxed);
+        counters
+            .reference_recoveries
+            .store(assembler.stats.reference_recoveries, Ordering::Relaxed);
+        counters
+            .reference_recovery_timeouts
+            .store(assembler.stats.reference_recovery_timeouts, Ordering::Relaxed);
         counters
             .late_packets
             .store(assembler.stats.late_packets, Ordering::Relaxed);
@@ -1371,9 +1474,28 @@ pub(crate) fn packetize(
     seq_start: u16,
     idr: bool,
 ) -> Vec<Vec<u8>> {
+    packetize_frame_type(
+        frame,
+        data,
+        packet_size,
+        fec_percent,
+        seq_start,
+        if idr { 2 } else { 1 },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn packetize_frame_type(
+    frame: u32,
+    data: &[u8],
+    packet_size: usize,
+    fec_percent: usize,
+    seq_start: u16,
+    frame_type: u8,
+) -> Vec<Vec<u8>> {
     let blocksize = packet_size + MAX_RTP_HEADER_LEN;
     let capacity = blocksize - SHARD_HEADER_LEN;
-    let mut header = vec![0x01, 0, 0, if idr { 2 } else { 1 }, 0, 0, 0, 0];
+    let mut header = vec![0x01, 0, 0, frame_type, 0, 0, 0, 0];
     let total = data.len() + header.len();
     let mut last = total % (packet_size - NV_HEADER_LEN);
     if last == 0 {
@@ -1511,6 +1633,67 @@ mod tests {
         assert_eq!(asm.stats.dropped_waiting_idr, 1);
         let out = feed(&mut asm, 4, true, 0);
         assert!(matches!(&out[..], [AssemblerOutput::Frame(f)] if f.keyframe && f.frame == 4));
+    }
+
+    #[test]
+    fn reference_recovery_waits_for_host_marker_after_loss() {
+        let mut asm = FrameAssembler::new(PACKET_SIZE as u32, VideoCodec::Hevc);
+        asm.reference_frame_invalidation = true;
+        let now = Instant::now();
+        let packet = |number, idr, marker| {
+            let mut packet = packetize(number, &[0, 0, 1, 0x02, 1], PACKET_SIZE, 20, 0, idr).remove(0);
+            if marker {
+                packet[SHARD_HEADER_LEN + 3] = 5;
+            }
+            packet
+        };
+        // A recovery P-frame never starts a decoder.
+        assert!(asm.add_at(&packet(1, false, true), now).is_empty());
+        assert!(matches!(
+            asm.add_at(&packet(2, true, false), now)[..],
+            [AssemblerOutput::Frame(_)]
+        ));
+        // Lose frame 3. The first complete delta frame is held through the reorder window.
+        assert!(asm.add_at(&packet(4, false, false), now).is_empty());
+        let request_time = now + REORDER_WINDOW;
+        assert_eq!(
+            asm.expire(request_time),
+            [AssemblerOutput::InvalidateReferences { first: 3, last: 3 }]
+        );
+        // Reissue a bounded request when a marked response may have been lost.
+        let retry_time = request_time + REFERENCE_RETRY_INTERVAL;
+        assert_eq!(
+            asm.add_at(&packet(5, false, false), retry_time),
+            [AssemblerOutput::InvalidateReferences { first: 3, last: 5 }]
+        );
+        let resumed = asm.add_at(&packet(6, false, true), retry_time + Duration::from_millis(1));
+        assert!(matches!(&resumed[..], [AssemblerOutput::Frame(f)] if f.frame == 6 && !f.keyframe));
+        assert_eq!(asm.stats.dropped_waiting_idr, 1);
+        assert_eq!(asm.stats.dropped_waiting_rfi, 2);
+        assert_eq!(asm.stats.reference_recoveries, 1);
+    }
+
+    #[test]
+    fn reference_recovery_times_out_and_requires_a_full_keyframe() {
+        let mut asm = FrameAssembler::new(PACKET_SIZE as u32, VideoCodec::Hevc);
+        asm.reference_frame_invalidation = true;
+        let now = Instant::now();
+        let mut out = Vec::new();
+        asm.mark_lost(1, 1, now, &mut out);
+        assert_eq!(out, [AssemblerOutput::NeedIdr]);
+        let keyframe = packetize(2, &[0, 0, 1, 0x02, 1], PACKET_SIZE, 20, 0, true);
+        assert!(matches!(asm.add_at(&keyframe[0], now)[..], [AssemblerOutput::Frame(_)]));
+
+        out.clear();
+        asm.mark_lost(3, 1, now, &mut out);
+        assert_eq!(out, [AssemblerOutput::InvalidateReferences { first: 3, last: 3 }]);
+        let expired = now + REFERENCE_RECOVERY_TIMEOUT;
+        assert_eq!(asm.expire(expired), [AssemblerOutput::NeedIdr]);
+        assert_eq!(asm.stats.reference_recovery_timeouts, 1);
+        let mut late = packetize(3, &[0, 0, 1, 0x02, 1], PACKET_SIZE, 20, 0, false).remove(0);
+        late[SHARD_HEADER_LEN + 3] = 5;
+        assert!(asm.add_at(&late, expired).is_empty());
+        assert_eq!(asm.stats.dropped_waiting_idr, 1);
     }
 
     #[test]

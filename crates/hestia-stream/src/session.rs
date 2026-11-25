@@ -50,7 +50,7 @@ impl StreamSession {
         };
 
         stage(StreamStage::Rtsp);
-        let negotiated = rtsp::handshake(&HandshakeConfig {
+        let handshake = HandshakeConfig {
             session_url: config.session_url.clone(),
             server_codec_modes: config.server_codec_modes,
             remote_input_key: config.remote_input_key,
@@ -63,6 +63,9 @@ impl StreamSession {
             audio_channels: config.audio_channels,
             audio_channel_mask: config.audio_channel_mask,
             streaming_remotely: config.streaming_remotely,
+        };
+        let negotiated = rtsp::handshake_with_reference_recovery(&handshake, |format| {
+            !config.show_video_through_loss && video_sink.supports_reference_frame_invalidation(format)
         })
         .map_err(|e| StreamError::Rtsp(fail(StreamStage::Rtsp, e.to_string())))?;
 
@@ -100,6 +103,7 @@ impl StreamSession {
         let video = VideoReceiver::start_with_events(
             VideoConfig {
                 report_fec: negotiated.supports_fec_status,
+                reference_frame_invalidation: negotiated.reference_frame_invalidation,
                 remote: negotiated.endpoint(negotiated.video_port),
                 ping_payload: negotiated.video_ping_payload,
                 packet_size: announced_packet_size,
@@ -197,6 +201,16 @@ impl StreamSession {
                                 }
                                 (None, false)
                             }
+                            Ok(SessionFeedback::Video(VideoFeedback::InvalidateReferences { first, last })) => {
+                                match control.invalidate_reference_frames(first, last) {
+                                    Ok(()) => counters.reference_requests_sent.fetch_add(1, Ordering::Relaxed),
+                                    Err(e) => {
+                                        warn!("could not request reference frame invalidation: {e}");
+                                        counters.reference_request_errors.fetch_add(1, Ordering::Relaxed)
+                                    }
+                                };
+                                (None, false)
+                            }
                             Ok(SessionFeedback::Video(VideoFeedback::FirstFrame)) => {
                                 listener.on_event(StreamEvent::FirstFrame);
                                 (None, false)
@@ -258,6 +272,7 @@ impl StreamSession {
                                 recovered_packets: counters.recovered.load(Ordering::Relaxed),
                                 lost_frames: counters.lost_frames.load(Ordering::Relaxed),
                                 dropped_waiting_idr: counters.dropped_waiting_idr.load(Ordering::Relaxed),
+                                dropped_waiting_rfi: counters.dropped_waiting_rfi.load(Ordering::Relaxed),
                                 idr_requests: counters.recovery.requests(),
                                 rtt_ms: rtt,
                                 rtt_variance_ms: rtt_var,
@@ -343,6 +358,10 @@ mod tests {
 
     struct Collect(Arc<Mutex<Vec<EncodedFrame>>>);
     impl VideoSink for Collect {
+        fn supports_reference_frame_invalidation(&self, format: VideoFormat) -> bool {
+            format.codec == VideoCodec::Hevc
+        }
+
         fn setup(&mut self, _: VideoFormat, _: u32, _: u32, _: u32) -> Result<(), String> {
             Ok(())
         }
@@ -472,6 +491,54 @@ mod tests {
                 .iter()
                 .any(|(t, p)| *t == crate::control::PT_INPUT && p.len() == 14),
             "keyboard input arrives decrypted"
+        );
+    }
+
+    #[test]
+    fn recovers_from_hevc_loss_with_reference_invalidation() {
+        let key = [0x42; 16];
+        let frames = (0..4)
+            .map(|i| {
+                let mut frame = frame(i, 3000);
+                frame[4] = if i == 0 { 0x26 } else { 0x02 };
+                frame
+            })
+            .collect();
+        let host = MockHost::reference_recovery(key, frames, 1392);
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Events(Mutex::new(Vec::new())));
+        let mut config = test_config(&host, key);
+        config.video_formats[0].codec = VideoCodec::Hevc;
+        let session = StreamSession::start(config, Box::new(Collect(got.clone())), Box::new(NoAudio), events)
+            .expect("session starts");
+        assert!(session.negotiated().reference_frame_invalidation);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while got.lock().unwrap().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        session.stop();
+        let received = got.lock().unwrap();
+        assert_eq!(
+            received.iter().map(|frame| frame.frame_number).collect::<Vec<_>>(),
+            [1, 4]
+        );
+        assert!(!received[1].keyframe);
+        let messages = host.control_messages.lock().unwrap();
+        let (_, payload) = messages
+            .iter()
+            .find(|(ty, _)| *ty == crate::control::PT_INVALIDATE_REF_FRAMES)
+            .expect("host received a reference invalidation request");
+        assert_eq!(
+            payload.as_slice(),
+            &[2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|(ty, _)| *ty == crate::control::PT_REQUEST_IDR)
+                .count(),
+            1,
+            "START A only"
         );
     }
 

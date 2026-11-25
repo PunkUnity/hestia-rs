@@ -306,6 +306,7 @@ pub struct Negotiated {
     pub packet_size: u32,
     pub host_feature_flags: u32,
     pub supports_fec_status: bool,
+    pub reference_frame_invalidation: bool,
 }
 
 impl Negotiated {
@@ -431,6 +432,13 @@ fn ping_payload(msg: &Message) -> Option<[u8; 16]> {
 
 /// Runs the full handshake.
 pub fn handshake(cfg: &HandshakeConfig) -> Result<Negotiated, RtspError> {
+    handshake_with_reference_recovery(cfg, |_| false)
+}
+
+pub(crate) fn handshake_with_reference_recovery(
+    cfg: &HandshakeConfig,
+    decoder_supports_rfi: impl FnOnce(VideoFormat) -> bool,
+) -> Result<Negotiated, RtspError> {
     let url = &cfg.session_url;
     let remote = (url.host.as_str(), url.port)
         .to_socket_addrs()?
@@ -517,6 +525,7 @@ pub fn handshake(cfg: &HandshakeConfig) -> Result<Negotiated, RtspError> {
     let control = setup(&mut client, "streamid=control/13/0")?;
 
     let packet_size = cfg.packet_size - cfg.packet_size % 16;
+    let sunshine = host_sdp.raw.lines().any(|line| line.trim().starts_with("a=x-ss-"));
     let negotiated = Negotiated {
         remote,
         audio_port: server_port(&audio).unwrap_or(48000),
@@ -539,34 +548,38 @@ pub fn handshake(cfg: &HandshakeConfig) -> Result<Negotiated, RtspError> {
         packet_size,
         host_feature_flags: host_sdp.feature_flags(),
         // Sunshine-family protocol extension, independent of host input feature bits.
-        supports_fec_status: host_sdp.raw.lines().any(|line| line.trim().starts_with("a=x-ss-"))
-            || video.get("X-SS-Ping-Payload").is_some(),
+        supports_fec_status: sunshine || video.get("X-SS-Ping-Payload").is_some(),
+        // Hermes and Sunshine mark the recovery frame in the video header.
+        reference_frame_invalidation: sunshine && host_sdp.supports_rfi() && decoder_supports_rfi(video_format),
     };
 
-    let announce = sdp::build_announce(&AnnounceParams {
-        width: cfg.width,
-        height: cfg.height & !1,
-        fps: cfg.fps,
-        packet_size,
-        bitrate_kbps: cfg.bitrate_kbps,
-        format: video_format,
-        audio_channels: cfg.audio_channels,
-        audio_channel_mask: cfg.audio_channel_mask,
-        high_quality_audio,
-        audio_packet_duration_ms: negotiated.audio_packet_duration_ms,
-        encryption_enabled: encryption,
-        audio_encryption: negotiated.audio_encrypted,
-        streaming_remotely: cfg.streaming_remotely,
-        ipv6: remote.is_ipv6(),
-        host_address: remote.ip().to_string(),
-        video_port: negotiated.video_port,
-        refresh_rate_x100: cfg.fps * 100,
-        encoder_csc_mode: if video_format.codec == crate::sink::VideoCodec::PyroWave {
-            2
-        } else {
-            0
+    let announce = sdp::build_announce_with_reference_recovery(
+        &AnnounceParams {
+            width: cfg.width,
+            height: cfg.height & !1,
+            fps: cfg.fps,
+            packet_size,
+            bitrate_kbps: cfg.bitrate_kbps,
+            format: video_format,
+            audio_channels: cfg.audio_channels,
+            audio_channel_mask: cfg.audio_channel_mask,
+            high_quality_audio,
+            audio_packet_duration_ms: negotiated.audio_packet_duration_ms,
+            encryption_enabled: encryption,
+            audio_encryption: negotiated.audio_encrypted,
+            streaming_remotely: cfg.streaming_remotely,
+            ipv6: remote.is_ipv6(),
+            host_address: remote.ip().to_string(),
+            video_port: negotiated.video_port,
+            refresh_rate_x100: cfg.fps * 100,
+            encoder_csc_mode: if video_format.codec == crate::sink::VideoCodec::PyroWave {
+                2
+            } else {
+                0
+            },
         },
-    });
+        negotiated.reference_frame_invalidation,
+    );
     client.transact("ANNOUNCE", "streamid=control/13/0", vec![], Some(announce.into_bytes()))?;
     client.transact("PLAY", "/", vec![], None)?;
 

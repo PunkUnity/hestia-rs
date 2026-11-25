@@ -38,15 +38,25 @@ impl MockHost {
     /// Starts the host; it streams `frames` (Annex B) after the client's
     /// START B and a video ping, then terminates the session gracefully.
     pub fn start(key: [u8; 16], frames: Vec<Vec<u8>>, packet_size: usize) -> Self {
-        Self::spawn(key, frames, packet_size, true)
+        Self::spawn(key, frames, packet_size, true, false)
     }
 
     /// Stops sending video after the given frames while audio and ENet continue.
     pub fn stall_video(key: [u8; 16], frames: Vec<Vec<u8>>, packet_size: usize) -> Self {
-        Self::spawn(key, frames, packet_size, false)
+        Self::spawn(key, frames, packet_size, false, false)
     }
 
-    fn spawn(key: [u8; 16], frames: Vec<Vec<u8>>, packet_size: usize, terminate_after_video: bool) -> Self {
+    pub fn reference_recovery(key: [u8; 16], frames: Vec<Vec<u8>>, packet_size: usize) -> Self {
+        Self::spawn(key, frames, packet_size, true, true)
+    }
+
+    fn spawn(
+        key: [u8; 16],
+        frames: Vec<Vec<u8>>,
+        packet_size: usize,
+        terminate_after_video: bool,
+        reference_recovery: bool,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let announce = Arc::new(Mutex::new(None));
         let control_messages = Arc::new(Mutex::new(Vec::new()));
@@ -99,8 +109,13 @@ impl MockHost {
                     .header("CSeq", seq);
                     match method.as_str() {
                         "DESCRIBE" => {
-                            let body = "a=x-ss-general.featureFlags:3\na=x-ss-general.encryptionSupported:5\na=x-ss-general.encryptionRequested:1\na=fmtp:97 surround-params=21101\n";
-                            resp = resp.with_body("application/sdp", body.as_bytes().to_vec());
+                            let mut body = b"a=x-ss-general.featureFlags:3\na=x-ss-general.encryptionSupported:5\na=x-ss-general.encryptionRequested:1\na=fmtp:97 surround-params=21101\n".to_vec();
+                            if reference_recovery {
+                                body.extend_from_slice(
+                                    b"a=x-nv-video[0].refPicInvalidation:1\nsprop-parameter-sets=AAAAAU\n",
+                                );
+                            }
+                            resp = resp.with_body("application/sdp", body);
                         }
                         "SETUP" => {
                             let port = if target.contains("audio") {
@@ -247,6 +262,7 @@ impl MockHost {
         // Video
         {
             let stop = stop.clone();
+            let control_messages = control_messages.clone();
             std::thread::spawn(move || {
                 video.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
                 let _ = start_rx.recv_timeout(Duration::from_secs(10));
@@ -265,8 +281,31 @@ impl MockHost {
                 };
                 let mut seq = 0u16;
                 for (i, frame) in frames.iter().enumerate() {
-                    let packets = crate::video::packetize(i as u32 + 1, frame, packet_size, 20, seq, i == 0);
+                    let frame_type = match (i, reference_recovery) {
+                        (0, _) => 2,
+                        (3, true) => {
+                            let deadline = Instant::now() + Duration::from_secs(1);
+                            while !control_messages
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .any(|(ty, _)| *ty == control::PT_INVALIDATE_REF_FRAMES)
+                            {
+                                if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                            5
+                        }
+                        _ => 1,
+                    };
+                    let packets =
+                        crate::video::packetize_frame_type(i as u32 + 1, frame, packet_size, 20, seq, frame_type);
                     seq = seq.wrapping_add(packets.len() as u16);
+                    if reference_recovery && i == 1 {
+                        continue;
+                    }
                     for (n, p) in packets.iter().enumerate() {
                         // Lose one data packet per frame; FEC must cover it.
                         if n == 1 {

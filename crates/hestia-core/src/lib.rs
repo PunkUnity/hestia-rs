@@ -1588,6 +1588,11 @@ fn add_negotiated_to_report(n: &hestia_stream::rtsp::Negotiated, r: &mut report:
     r.field("Negotiated", "video", format!("{:?}", n.video_format));
     r.field(
         "Negotiated",
+        "reference frame invalidation",
+        n.reference_frame_invalidation,
+    );
+    r.field(
+        "Negotiated",
         "audio",
         format!(
             "{} ch, {} streams, {} ms packets{}",

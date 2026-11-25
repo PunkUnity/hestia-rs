@@ -119,6 +119,10 @@ impl FrameTiming {
 pub trait FrameDecoder: Send {
     fn name(&self) -> &'static str;
     fn supports(&self, format: VideoFormat) -> bool;
+    fn supports_reference_frame_invalidation(&self, _format: VideoFormat) -> bool {
+        false
+    }
+
     /// Called once the stream's format and size are known, before the
     /// first frame (hardware decoders are created here).
     fn configure(&mut self, _format: VideoFormat, _width: u32, _height: u32, _fps: u32) -> Result<(), String> {
@@ -400,6 +404,12 @@ impl DecodingSink {
 }
 
 impl VideoSink for DecodingSink {
+    fn supports_reference_frame_invalidation(&self, format: VideoFormat) -> bool {
+        self.decoder
+            .as_ref()
+            .is_some_and(|decoder| decoder.supports_reference_frame_invalidation(format))
+    }
+
     fn setup(&mut self, format: VideoFormat, width: u32, height: u32, fps: u32) -> Result<(), String> {
         let mut decoder = self.decoder.take().ok_or("decoder already set up")?;
         if !decoder.supports(format) {

@@ -68,6 +68,11 @@ impl fmt::Debug for KeyframeRequester {
 /// `submit` runs on the network receive thread: implementations must not
 /// block on decoding there (queue the frame and decode elsewhere).
 pub trait VideoSink: Send {
+    /// Whether the decoder can resume from a host-marked reference recovery frame.
+    fn supports_reference_frame_invalidation(&self, _format: VideoFormat) -> bool {
+        false
+    }
+
     fn setup(&mut self, format: VideoFormat, width: u32, height: u32, fps: u32) -> Result<(), String>;
     /// Called once before `setup` with a handle for asynchronous IDR requests.
     fn attach_keyframe_requester(&mut self, _requester: KeyframeRequester) {}
