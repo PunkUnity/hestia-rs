@@ -350,9 +350,6 @@ class SlintInputView extends View {
             if (rightX != -1) {
                 handleHeight = mRightHandle.getHeight();
             }
-            if (!mActionMenuDeferred) {
-                showActionMenu();
-            }
         } else {
             if (mCursorHandle != null) {
                 handleHeight = mCursorHandle.getHeight();
@@ -363,8 +360,13 @@ class SlintInputView extends View {
             finishActionMenu();
         }
 
-        mSelectionRect.set(Math.min(leftX, rightX), Math.min(leftY, rightY) - cursorHeight,
-                Math.max(leftX, rightX), Math.max(leftY, rightY) + handleHeight);
+        // The floating toolbar needs a non-empty anchor even for an empty field's caret.
+        int left = Math.min(leftX, rightX);
+        mSelectionRect.set(left, Math.min(leftY, rightY) - cursorHeight,
+                Math.max(left + 1, Math.max(leftX, rightX)), Math.max(leftY, rightY) + handleHeight);
+        if (numHandles == 2 && !mActionMenuDeferred) {
+            showActionMenu();
+        }
         if (mCurrentActionMode != null) {
             mCurrentActionMode.invalidateContentRect();
         }
@@ -632,7 +634,9 @@ public class SlintAndroidJavaHelper {
             if (showCursorHandles) {
                 numHandles = cursorPosition == anchorPosition ? 1 : 2;
             }
-            if (cursorPosition < anchorPosition) {
+            if (numHandles == 1) {
+                mInputView.setCursorPos(curX, curY, curX, curY, cursorHeight, numHandles);
+            } else if (cursorPosition < anchorPosition) {
                 mInputView.setCursorPos(curX, curY, anchorX, anchorY, cursorHeight, numHandles);
             } else {
                 mInputView.setCursorPos(anchorX, anchorY, curX, curY, cursorHeight, numHandles);

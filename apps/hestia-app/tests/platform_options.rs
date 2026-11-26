@@ -13,6 +13,46 @@ fn row(ui: &AppWindow, label: &str, expected: bool) {
 }
 
 #[test]
+fn add_host_address_stays_above_the_android_keyboard() {
+    use slint::{LogicalPosition, LogicalSize};
+    use std::time::Duration;
+
+    i_slint_backend_testing::init_no_event_loop();
+    let ui = AppWindow::new().unwrap();
+    ui.set_is_android(true);
+    ui.set_starting(false);
+    ui.show().unwrap();
+    ui.window().set_size(LogicalSize::new(412.0, 915.0));
+    ui.set_add_visible(true);
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(20));
+    slint::platform::update_timers_and_animations();
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(400));
+    slint::platform::update_timers_and_animations();
+
+    let address = ElementHandle::find_by_element_id(&ui, "AppWindow::address")
+        .next()
+        .expect("visible Add Host address field");
+    let field_bottom = || address.absolute_position().y + address.size().height;
+    let original_bottom = field_bottom();
+    let keyboard_top = 590.0;
+    assert!(original_bottom > keyboard_top);
+
+    ui.window().set_virtual_keyboard(
+        LogicalPosition::new(0.0, keyboard_top),
+        LogicalSize::new(412.0, 915.0 - keyboard_top),
+        i_slint_core::InternalToken,
+    );
+    assert!(field_bottom() < keyboard_top);
+
+    ui.window().set_virtual_keyboard(
+        LogicalPosition::default(),
+        LogicalSize::default(),
+        i_slint_core::InternalToken,
+    );
+    assert_eq!(field_bottom(), original_bottom);
+}
+
+#[test]
 fn settings_follow_the_decoder_and_platform() {
     i_slint_backend_testing::init_no_event_loop();
     let ui = AppWindow::new().unwrap();

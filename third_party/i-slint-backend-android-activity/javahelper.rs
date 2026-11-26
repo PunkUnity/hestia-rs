@@ -960,7 +960,6 @@ fn callback_set_insets<'local>(
     i_slint_core::api::invoke_from_event_loop(move || {
         if let Some(w) = CURRENT_WINDOW.with_borrow(|x| x.upgrade()) {
             w.update_window_insets(
-                PhysicalPosition::new(window_left as _, window_top as _),
                 PhysicalSize::new(
                     (window_right - window_left) as _,
                     (window_bottom - window_top) as _,

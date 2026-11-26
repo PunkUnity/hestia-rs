@@ -449,7 +449,7 @@ export component TextField inherits Rectangle {
         }
     }
     changed want-focus => {
-        if (self.want-focus) {
+        if (self.want-focus && !self.editing) {
             root.grab();
         }
     }
@@ -553,6 +553,7 @@ export component TextField inherits Rectangle {
 // rendered once, not on every frame of the motion.
 export component Modal inherits Rectangle {
     in property <length> card-width: 440px;
+    in property <length> bottom-inset: 0px;
     // Keep the focus on the dialog itself (nothing glows) until an arrow
     // key, which calls `arrow` to focus a control.
     in property <bool> hold-focus: false;
@@ -563,6 +564,7 @@ export component Modal inherits Rectangle {
     callback dismissed;
     property <bool> shown;
     property <bool> sheet: Theme.compact;
+    property <length> available-height: Math.max(0px, root.height - root.bottom-inset);
 
     background: root.shown ? Theme.scrim : Theme.scrim.transparentize(1);
     animate background { duration: 200ms; easing: ease-out-quad; }
@@ -602,14 +604,13 @@ export component Modal inherits Rectangle {
     }
 
     slot := Rectangle {
+        property <length> enter-offset: root.shown ? 0px : (root.sheet ? Math.min(self.height, 120px) : 18px);
         width: root.sheet ? root.width : Math.min(root.card-width, root.width - 48px);
-        height: Math.min(content.preferred-height, root.height - (root.sheet ? 24px : 48px));
+        height: Math.min(content.preferred-height, Math.max(0px, root.available-height - (root.sheet ? 24px : 48px)));
         x: (root.width - self.width) / 2;
-        y: root.sheet
-            ? root.height - self.height + (root.shown ? 0px : Math.min(self.height, 120px))
-            : (root.height - self.height) / 2 + (root.shown ? 0px : 18px);
+        y: (root.sheet ? root.available-height - self.height : (root.available-height - self.height) / 2) + self.enter-offset;
         transform-scale: root.shown || root.sheet ? 1 : 0.94;
-        animate y { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.25, 1); }
+        animate enter-offset { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.25, 1); }
         animate transform-scale { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.25, 1); }
 
         card := Rectangle {
@@ -625,11 +626,22 @@ export component Modal inherits Rectangle {
             // Swallow taps so they don't reach the scrim.
             TouchArea { }
 
-            content := VerticalLayout {
-                padding: Theme.compact ? 20px : 26px;
-                padding-bottom: Theme.compact ? 28px : 26px;
-                spacing: 14px;
-                @children
+            Flickable {
+                content-width: self.width;
+                content-height: content.preferred-height;
+                interactive: self.content-height > self.height;
+                changed height => {
+                    self.content-y = Math.max(self.content-y, Math.min(0px, self.height - self.content-height));
+                }
+
+                content := VerticalLayout {
+                    width: parent.width;
+                    height: self.preferred-height;
+                    padding: Theme.compact ? 20px : 26px;
+                    padding-bottom: Theme.compact ? 28px : 26px;
+                    spacing: 14px;
+                    @children
+                }
             }
 
             // The contents fade in under a veil of the card's own colour: a

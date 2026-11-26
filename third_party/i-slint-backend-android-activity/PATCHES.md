@@ -22,6 +22,13 @@
    a finger. For a mouse pointer, `Down`, `Up` and `Cancel` are dropped
    (the button events carry the press) and `Move` is a pointer move.
 
-Everything else is unchanged. To update: copy the new upstream directory,
-reapply these four changes, and bump the pinned slint version in the root
-Cargo.toml together with `version` here.
+5. **Text selection menu** (`androidwindowadapter.rs`, `SlintAndroidJavaHelper.java`).
+   A long press can focus a text field on release and open the Android menu at
+   its caret, including when the field is empty. The floating menu uses a
+   nonempty anchor rectangle at the caret.
+6. **Keyboard position** (`androidwindowadapter.rs`, `javahelper.rs`). Report
+   the keyboard rectangle relative to the Slint window so dialogs can use it
+   in Android split-screen and freeform windows.
+
+To update, copy the new upstream directory, reapply the changes listed above,
+and bump the pinned Slint version in the root `Cargo.toml` and this crate.

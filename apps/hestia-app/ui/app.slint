@@ -945,6 +945,14 @@ export component AppWindow inherits Window {
         if root.add-visible: Modal {
             width: 100%;
             height: 100%;
+            bottom-inset: root.virtual-keyboard-size.height > 0px && root.virtual-keyboard-position.y > 0px
+                ? Math.clamp(keys.y + keys.height - root.virtual-keyboard-position.y, 0px, keys.height)
+                : 0px;
+            changed bottom-inset => {
+                if (address.editing) {
+                    address.ensure-visible(ScrollBehavior.instant);
+                }
+            }
             hold-focus: root.dlg < 0;
             arrow => {
                 root.dlg = 0;
@@ -961,7 +969,7 @@ export component AppWindow inherits Window {
             DialogText {
                 text: "The IP address or name of the PC running Hermes. Add :port if it doesn't use 47989.";
             }
-            TextField {
+            address := TextField {
                 placeholder: "192.168.0.10";
                 text <=> root.add-address;
                 enabled: !root.add-busy;

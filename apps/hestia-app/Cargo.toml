@@ -50,6 +50,7 @@ i-slint-backend-android-activity = "=1.19.0"
 
 [dev-dependencies]
 i-slint-backend-testing = "=1.19.0"
+i-slint-core = "=1.19.0"
 # examples/screenshots.rs renders headless with the software renderer and
 # saves PNGs.
 slint = { workspace = true, features = ["renderer-software"] }

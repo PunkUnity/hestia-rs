@@ -29,6 +29,7 @@ use std::sync::Arc;
 struct LongPressDetection {
     _timer: Timer,
     position: LogicalPosition,
+    elapsed: bool,
 }
 
 pub struct AndroidWindowAdapter {
@@ -49,7 +50,7 @@ pub struct AndroidWindowAdapter {
     pub(crate) show_cursor_handles: Cell<bool>,
 
     long_press: RefCell<Option<LongPressDetection>>,
-    /// Whether a long press selected text and the text selection menu waits for the finger to lift.
+    /// Whether a long press on a text input is waiting to show the menu on release.
     show_menu_on_release: Cell<bool>,
     last_pressed_state: Cell<ButtonState>,
 
@@ -202,6 +203,23 @@ impl AndroidWindowAdapter {
                 .defer_action_menu(false)
                 .unwrap_or_else(|e| print_jni_error(&self.app, e));
         }
+    }
+
+    fn prepare_action_menu(&self, position: LogicalPosition) {
+        let window = WindowInner::from_pub(&self.window);
+        let Some(item) = window.focus_item.borrow().upgrade() else { return };
+        let Some(text_input) = item.downcast::<i_slint_core::items::TextInput>() else { return };
+        let geometry = item.geometry().translate(item.map_to_window(Default::default()).to_vector());
+        if !geometry.contains(i_slint_core::lengths::logical_point_from_api(position)) {
+            return;
+        }
+
+        // Defer the toolbar before changing selection. The input method can update the
+        // handles immediately, even though the finger is still down.
+        self.show_cursor_handles.set(true);
+        self.show_menu_on_release.set(true);
+        self.java_helper.defer_action_menu(true).unwrap_or_else(|e| print_jni_error(&self.app, e));
+        text_input.as_pin_ref().select_word_on_long_press(&window.window_adapter(), &item);
     }
 
     pub fn new(app: AndroidApp) -> Rc<Self> {
@@ -429,7 +447,11 @@ impl AndroidWindowAdapter {
                                     .unwrap_or_else(|e| print_jni_error(&self.app, e)),
                                 long_press_timeout,
                             );
-                            self.long_press.replace(Some(LongPressDetection { position, _timer }));
+                            self.long_press.replace(Some(LongPressDetection {
+                                position,
+                                _timer,
+                                elapsed: false,
+                            }));
                             if let Some(p) = motion_event.pointers().next() {
                                 self.window.dispatch_event(WindowEvent::internal(
                                     InternalEvent::Touch {
@@ -447,7 +469,7 @@ impl AndroidWindowAdapter {
                             InputStatus::Handled
                         }
                         MotionAction::Up => {
-                            self.long_press.take();
+                            let long_press = self.long_press.take();
                             if let Some(p) = motion_event.pointers().next() {
                                 self.window.dispatch_event(WindowEvent::internal(
                                     InternalEvent::Touch {
@@ -461,6 +483,13 @@ impl AndroidWindowAdapter {
                                         history: Default::default(),
                                     },
                                 ));
+                            }
+                            // On Android the first touch focuses a text input on release.
+                            // Give a hold on that first touch another chance to open Paste.
+                            if !self.show_menu_on_release.get()
+                                && let Some(press) = long_press.filter(|press| press.elapsed)
+                            {
+                                self.prepare_action_menu(press.position);
                             }
                             if self.show_menu_on_release.get() {
                                 self.cancel_menu_on_release();
@@ -692,7 +721,6 @@ impl AndroidWindowAdapter {
 
     pub(super) fn update_window_insets(
         &self,
-        window_origin: PhysicalPosition,
         window_size: PhysicalSize,
         safe_area: PhysicalEdges,
         keyboard: PhysicalEdges,
@@ -701,34 +729,30 @@ impl AndroidWindowAdapter {
         WindowInner::from_pub(&self.window)
             .set_window_item_safe_area(safe_area.to_logical(scale_factor));
 
-        let window_origin = window_origin.to_logical(scale_factor);
         let window_size = window_size.to_logical(scale_factor);
         let keyboard = keyboard.to_logical(scale_factor);
 
         // Assume that the keyboard is only on one side.
         let rect = if keyboard.bottom > (0 as i_slint_core::Coord) {
             (
-                LogicalPosition::new(
-                    window_origin.x,
-                    window_origin.y + window_size.height - keyboard.bottom as i_slint_core::Coord,
-                ),
+                LogicalPosition::new(0., window_size.height - keyboard.bottom as i_slint_core::Coord),
                 LogicalSize::new(window_size.width, keyboard.bottom as _),
             )
         } else if keyboard.top > (0 as i_slint_core::Coord) {
             (
-                LogicalPosition::new(window_origin.x, window_origin.y),
+                LogicalPosition::default(),
                 LogicalSize::new(window_size.width, keyboard.top as _),
             )
         } else if keyboard.left > (0 as i_slint_core::Coord) {
             (
-                LogicalPosition::new(window_origin.x, window_origin.y),
+                LogicalPosition::default(),
                 LogicalSize::new(keyboard.left as _, window_size.height),
             )
         } else if keyboard.right > (0 as i_slint_core::Coord) {
             (
                 LogicalPosition::new(
-                    window_origin.x + window_size.width - keyboard.right as i_slint_core::Coord,
-                    window_origin.y,
+                    window_size.width - keyboard.right as i_slint_core::Coord,
+                    0.,
                 ),
                 LogicalSize::new(keyboard.right as _, window_size.height),
             )
@@ -742,33 +766,13 @@ impl AndroidWindowAdapter {
 
 fn long_press_timeout() {
     let Some(adaptor) = CURRENT_WINDOW.with_borrow(|x| x.upgrade()) else { return };
-    let Some(current) = adaptor.long_press.take() else { return };
-    if let Some(focus_item) =
-        i_slint_core::window::WindowInner::from_pub(&adaptor.window).focus_item.borrow().upgrade()
-    {
-        if let Some(text_input) = focus_item.downcast::<i_slint_core::items::TextInput>() {
-            let text_input = text_input.as_pin_ref();
-            let geometry = focus_item
-                .geometry()
-                .translate(focus_item.map_to_window(Default::default()).to_vector());
-            if !geometry.contains(i_slint_core::lengths::logical_point_from_api(current.position)) {
-                return;
-            };
-            // The handles show for a selection made by touch, even if the input method moved the
-            // cursor and hid them since the finger went down.
-            adaptor.show_cursor_handles.set(true);
-            text_input.select_word_on_long_press(
-                &(adaptor.clone() as Rc<dyn WindowAdapter>),
-                &focus_item,
-            );
-            // Like in native text fields, the menu shows once the finger lifts.
-            adaptor.show_menu_on_release.set(true);
-            adaptor
-                .java_helper
-                .defer_action_menu(true)
-                .unwrap_or_else(|e| print_jni_error(&adaptor.app, e))
-        }
+    let position = {
+        let mut long_press = adaptor.long_press.borrow_mut();
+        let Some(press) = long_press.as_mut() else { return };
+        press.elapsed = true;
+        press.position
     };
+    adaptor.prepare_action_menu(position);
 }
 
 /// Convert raw pointer coordinates to a LogicalPosition, applying the
