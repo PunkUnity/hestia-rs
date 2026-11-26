@@ -41,6 +41,10 @@ struct State {
     aged_out: u64,
     retired: u64,
     unmatched: u64,
+    last_visible_release: Option<Instant>,
+    visible_release_intervals: LatencyHistogram,
+    longest_visible_release_interval: Duration,
+    visible_release_intervals_over_100ms: u64,
     last_render_ns: Option<i64>,
     intervals: LatencyHistogram,
     interval_count: u64,
@@ -68,6 +72,7 @@ impl State {
     fn finish_output(&mut self, now: Instant) {
         self.observe_output_gap(now);
         self.last_output = None;
+        self.last_visible_release = None;
         self.reset_render(now);
     }
 
@@ -111,6 +116,7 @@ impl DirectVideoStats {
             // The decoder may have noticed the change after the surface
             // disappeared. Do not treat that period as visible output time.
             s.last_output = None;
+            s.last_visible_release = None;
             s.reset_render(now);
         }
     }
@@ -156,7 +162,7 @@ impl DirectVideoStats {
         s.pending.push_back((pts, now));
     }
 
-    pub(crate) fn release_result(&self, id: usize, pts: i64, visible: bool, ok: bool) {
+    pub(crate) fn release_result(&self, id: usize, pts: i64, visible: bool, ok: bool, now: Instant) {
         let mut s = self.lock();
         if s.codec != Some(id) {
             return;
@@ -164,11 +170,20 @@ impl DirectVideoStats {
         match (visible, ok) {
             (true, true) => {
                 s.released += 1;
+                if let Some(previous) = s.last_visible_release.replace(now) {
+                    let interval = now.saturating_duration_since(previous);
+                    s.visible_release_intervals.record(interval);
+                    s.longest_visible_release_interval = s.longest_visible_release_interval.max(interval);
+                    s.visible_release_intervals_over_100ms += u64::from(interval >= Duration::from_millis(100));
+                }
                 if s.callbacks {
                     s.tracked += 1;
                 }
             }
-            (false, true) => s.hidden += 1,
+            (false, true) => {
+                s.hidden += 1;
+                s.last_visible_release = None;
+            }
             (_, false) => {
                 s.failed += 1;
                 if visible {
@@ -256,6 +271,16 @@ impl DirectVideoStats {
                 },
             ),
         ];
+        if let Some(intervals) = s.visible_release_intervals.summary() {
+            rows.push((
+                "visible buffer release intervals (app clock)",
+                format!(
+                    "{intervals}; worst {:.2} ms; {} intervals at least 100 ms",
+                    s.longest_visible_release_interval.as_secs_f64() * 1000.0,
+                    s.visible_release_intervals_over_100ms,
+                ),
+            ));
+        }
         if s.ever_measured {
             rows.extend([
                 ("visible releases with callback tracking", s.tracked.to_string()),
@@ -290,6 +315,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn release_intervals_capture_a_stall_without_relying_on_codec_timestamps() {
+        let stats = DirectVideoStats::default();
+        let start = Instant::now();
+        stats.begin_codec(1, 60, start);
+        stats.enable_callbacks(1);
+        for (pts, elapsed_ms) in [(1, 0), (2, 17), (3, 1017)] {
+            let now = start + Duration::from_millis(elapsed_ms);
+            stats.expect_callback(1, pts, now);
+            stats.release_result(1, pts, true, true, now);
+            stats.callback(1, pts, pts * 16_666_667, now);
+        }
+        let rows = stats.report(start + Duration::from_millis(1017));
+        assert!(rows.iter().any(|(label, value)| {
+            *label == "visible buffer release intervals (app clock)"
+                && value.contains("(2 samples); worst 1000.00 ms; 1 intervals at least 100 ms")
+        }));
+        assert!(rows.iter().any(|(label, value)| {
+            *label == "codec render timestamp intervals" && value.contains("worst 16.67 ms")
+        }));
+    }
+
+    #[test]
+    fn release_intervals_restart_after_surface_changes() {
+        let stats = DirectVideoStats::default();
+        let start = Instant::now();
+        let later = start + Duration::from_secs(2);
+        stats.begin_codec(1, 60, start);
+        stats.release_result(1, 1, true, true, start);
+        stats.surface_changed(1, later);
+        stats.release_result(1, 2, true, true, later);
+        stats.release_result(1, 3, true, false, later + Duration::from_millis(1));
+        stats.release_result(1, 4, true, true, later + Duration::from_millis(17));
+        assert!(stats.report(later).iter().any(|(label, value)| {
+            *label == "visible buffer release intervals (app clock)"
+                && value.contains("(1 samples); worst 17.00 ms; 0 intervals at least 100 ms")
+        }));
+    }
+
+    #[test]
     fn late_callbacks_and_failures_do_not_become_display_drops() {
         let stats = DirectVideoStats::default();
         let now = Instant::now();
@@ -297,11 +361,11 @@ mod tests {
         stats.enable_callbacks(1);
         for pts in 0..3 {
             stats.expect_callback(1, pts, now);
-            stats.release_result(1, pts, true, true);
+            stats.release_result(1, pts, true, true, now);
         }
         stats.expect_callback(1, 4, now);
-        stats.release_result(1, 4, true, false);
-        stats.release_result(1, 5, false, true);
+        stats.release_result(1, 4, true, false, now);
+        stats.release_result(1, 5, false, true, now);
         assert_eq!(stats.counts().discarded, 0);
         assert!(
             stats

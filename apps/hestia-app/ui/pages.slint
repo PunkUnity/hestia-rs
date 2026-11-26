@@ -1379,6 +1379,7 @@ export component SettingsPage inherits Page {
     in-out property <bool> hardware-decoding;
     in-out property <bool> gpu-video;
     in-out property <bool> direct-video;
+    in-out property <int> frame-pacing;
     in-out property <bool> show-video-through-loss;
     in property <bool> android;
     in property <bool> physical-keyboard;
@@ -1390,6 +1391,7 @@ export component SettingsPage inherits Page {
     in property <bool> touch-controls;
     // The PyroWave decoder renders planar frames, including on Android.
     property <bool> mediacodec: root.android && root.hardware-decoding && root.codec != 4;
+    property <bool> direct-frame-pacing: root.mediacodec && root.direct-video;
     property <bool> gpu-conversion: !root.android || (root.hardware-decoding && root.codec == 4);
     // 0 landscape, 1 portrait, 2 follow the device
     in-out property <int> orientation;
@@ -1419,13 +1421,14 @@ export component SettingsPage inherits Page {
     property <[string]> preset-names: ["Custom", "Fast", "Balanced", "Quality", "Battery saver"];
     in property <[string]> codec-names;
     property <[string]> scale-names: ["Fit", "Fill", "Stretch"];
+    property <[string]> pacing-names: ["Prefer lowest latency", "Balanced"];
     property <[string]> orientation-names: ["Landscape", "Portrait", "Follow the device"];
     property <[string]> speaker-names: ["Stereo", "5.1 surround", "7.1 surround"];
     property <string> custom-text;
     property <string> profile-text;
 
     // Focus: the header's Back (-2) and Save (-3), then the rows in page
-    // order: 0…4, Metered bitrate (24), 5…7, Direct video (19), 8, Video
+    // order: 0…3, Frame pacing (29), 4, Metered bitrate (24), 5…7, Direct video (19), 8, Video
     // through losses (28), 9…18, saved profiles (100…), keyboard shortcuts
     // (25…27), 20…23, then Debug (29…33) once unlocked.
     property <int> nav: -1;
@@ -1473,8 +1476,8 @@ export component SettingsPage inherits Page {
     pure function at(i: int) -> bool {
         return root.sheet < 0 && root.nav == i;
     }
-    // Rows 24 (metered bitrate), 19 (direct video) and 28 (video through
-    // losses) sit out of order; `step` places them.
+    // Metered bitrate, Direct video, frame pacing and video through losses
+    // sit outside the usual index order. `step` places them.
     pure function pos(i: int) -> int {
         return i < 19 ? i
             : i >= 100 ? 19 + (i - 100)
@@ -1494,6 +1497,8 @@ export component SettingsPage inherits Page {
             && (i != 18 || root.host-name != "");
     }
     pure function step(from: int, dir: int) -> int {
+        if (from == 29) { return dir > 0 ? 4 : 3; }
+        if (root.android && ((from == 3 && dir > 0) || (from == 4 && dir < 0))) { return 29; }
         if (from == 24) { return dir > 0 ? 5 : 4; }
         if (root.android && ((from == 4 && dir > 0) || (from == 5 && dir < 0))) { return 24; }
         if (from == 19) { return dir > 0 ? 8 : 7; }
@@ -1556,6 +1561,8 @@ export component SettingsPage inherits Page {
             root.orientation = i;
         } else if (id == 15) {
             root.audio = i;
+        } else if (id == 29) {
+            root.frame-pacing = i;
         }
     }
 
@@ -1695,6 +1702,18 @@ export component SettingsPage inherits Page {
                             open => {
                                 root.sheet = 3;
                             }
+                        }
+                        if root.android: ChoiceRow {
+                            label: "Video frame pacing";
+                            hint: !root.direct-frame-pacing ? "Uses Direct video with hardware decoding on a supported codec"
+                                : root.frame-pacing == 1 ? "Times output to the display refresh" : "Releases frames as soon as they are decoded";
+                            options: root.pacing-names;
+                            index <=> root.frame-pacing;
+                            want-focus: root.at(29);
+                            nav(k) => { return root.move(29, k); }
+                            entered => { root.nav = 29; }
+                            picked(i) => { root.choose(29, i); }
+                            open => { root.sheet = 29; }
                         }
                         SliderRow {
                             label: "Bitrate";
@@ -2244,11 +2263,11 @@ export component SettingsPage inherits Page {
         width: 100%;
         height: 100%;
         title: root.sheet == 0 ? "Preset" : root.sheet == 1 ? "Resolution" : root.sheet == 3 ? "Frame rate"
-            : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : "Speakers";
+            : root.sheet == 5 ? "Codec" : root.sheet == 9 ? "Picture" : root.sheet == 10 ? "Orientation" : root.sheet == 29 ? "Video frame pacing" : "Speakers";
         options: root.sheet == 0 ? root.preset-names : root.sheet == 1 ? root.resolution-options : root.sheet == 3 ? root.fps-options
-            : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.speaker-names;
+            : root.sheet == 5 ? root.codec-names : root.sheet == 9 ? root.scale-names : root.sheet == 10 ? root.orientation-names : root.sheet == 29 ? root.pacing-names : root.speaker-names;
         current: root.sheet == 0 ? root.preset : root.sheet == 1 ? root.resolution : root.sheet == 3 ? root.fps
-            : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.audio;
+            : root.sheet == 5 ? root.codec : root.sheet == 9 ? root.video-scale : root.sheet == 10 ? root.orientation : root.sheet == 29 ? root.frame-pacing : root.audio;
         picked(i) => {
             root.choose(root.sheet, i);
             root.sheet = -1;

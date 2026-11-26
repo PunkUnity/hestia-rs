@@ -132,7 +132,9 @@ impl Measurement {
     }
 
     pub(crate) fn release_result(&self, pts: i64, visible: bool, ok: bool) {
-        self.stats.direct_video.release_result(self.id, pts, visible, ok);
+        self.stats
+            .direct_video
+            .release_result(self.id, pts, visible, ok, Instant::now());
     }
 
     pub(crate) fn discard_older(&self, visible: bool) {
