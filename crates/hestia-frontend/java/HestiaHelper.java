@@ -13,6 +13,9 @@ import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -101,8 +104,47 @@ public final class HestiaHelper {
     private static WifiManager.WifiLock sHighPerfWifiLock;
     private static WifiManager.WifiLock sLowLatencyWifiLock;
 
+    private static boolean releaseWifiLocks() {
+        boolean low = sLowLatencyWifiLock != null && sLowLatencyWifiLock.isHeld();
+        boolean high = sHighPerfWifiLock != null && sHighPerfWifiLock.isHeld();
+        try {
+            if (low) {
+                sLowLatencyWifiLock.release();
+            }
+        } finally {
+            if (high) {
+                sHighPerfWifiLock.release();
+            }
+        }
+        return low || high;
+    }
+
+    private static String wifiLockSkipReason(Context context, WifiManager wifi) {
+        if (wifi == null) {
+            return "skipped (no Wi-Fi on this device)";
+        }
+        if (!wifi.isWifiEnabled()) {
+            return "skipped (Wi-Fi is off)";
+        }
+        ConnectivityManager connectivity = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivity == null) {
+            return "skipped (stream network unavailable)";
+        }
+        Network network = connectivity.getBoundNetworkForProcess();
+        if (network == null) {
+            network = connectivity.getActiveNetwork();
+        }
+        NetworkCapabilities caps = network == null ? null : connectivity.getNetworkCapabilities(network);
+        if (caps == null) {
+            return "skipped (stream network unavailable)";
+        }
+        // Android can report Wi-Fi alongside VPN when that is its underlying transport.
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? null
+                : "skipped (stream network reports no Wi-Fi transport)";
+    }
+
     /**
-     * Keeps Wi-Fi out of power save while a stream runs, as Moonlight does.
+     * Keeps the stream's Wi-Fi connection out of power save, as Moonlight does.
      * In power save the radio naps between beacons: packets wait at the
      * access point, arrive in bursts, and whole video frames go missing.
      * The low-latency lock (Android 10+) applies while the app is in the
@@ -110,24 +152,17 @@ public final class HestiaHelper {
      * did, for the log.
      */
     @SuppressWarnings("deprecation")
-    public static String setWifiLowLatency(final Activity activity, final boolean on) {
+    public static synchronized String setWifiLowLatency(final Activity activity, final boolean on) {
         try {
             if (!on) {
-                boolean held = false;
-                if (sLowLatencyWifiLock != null && sLowLatencyWifiLock.isHeld()) {
-                    sLowLatencyWifiLock.release();
-                    held = true;
-                }
-                if (sHighPerfWifiLock != null && sHighPerfWifiLock.isHeld()) {
-                    sHighPerfWifiLock.release();
-                    held = true;
-                }
-                return held ? "released" : "not held";
+                return releaseWifiLocks() ? "released" : "not held";
             }
-            WifiManager wifi = (WifiManager) activity.getApplicationContext()
-                    .getSystemService(Context.WIFI_SERVICE);
-            if (wifi == null) {
-                return "no Wi-Fi on this device";
+            Context context = activity.getApplicationContext();
+            WifiManager wifi = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
+            String skipReason = wifiLockSkipReason(context, wifi);
+            if (skipReason != null) {
+                releaseWifiLocks();
+                return skipReason;
             }
             if (sHighPerfWifiLock == null) {
                 sHighPerfWifiLock = wifi.createWifiLock(
@@ -142,9 +177,11 @@ public final class HestiaHelper {
                     sLowLatencyWifiLock.setReferenceCounted(false);
                 }
                 sLowLatencyWifiLock.acquire();
-                return "low-latency lock held";
+                if (sLowLatencyWifiLock.isHeld()) {
+                    return "low-latency lock held";
+                }
             }
-            return "high-performance lock held (low latency needs Android 10)";
+            return sHighPerfWifiLock.isHeld() ? "high-performance lock held" : "lock not held";
         } catch (RuntimeException e) {
             // Some devices refuse the lock even with WAKE_LOCK granted.
             return "lock refused: " + e;
