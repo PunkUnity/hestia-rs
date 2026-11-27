@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Hestia RS Theme Builder</title>
+  <style>
+    :root { color: #f6f0eb; background: #151210; font: 16px/1.45 system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 68rem; margin: auto; padding: clamp(1rem, 4vw, 3rem); }
+    h1 { font-size: clamp(1.7rem, 4vw, 2.5rem); margin: 0; }
+    h2 { font-size: 1.1rem; margin: 0 0 .8rem; }
+    p { color: #c4b7ae; margin: .35rem 0 1.4rem; }
+    form { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1.2rem; align-items: start; }
+    section { border-radius: 1rem; border: 1px solid #55473e; padding: 1.15rem; background: #211c18; min-width: 0; }
+    label { display: grid; gap: .35rem; }
+    .details, .colors { display: grid; gap: .85rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .details { margin-bottom: 1.4rem; }
+    input, select, button { font: inherit; }
+    input:not([type=color]), select {
+      color: inherit; background: #151210; border: 1px solid #726053; border-radius: .5rem;
+      padding: .45rem .55rem; min-width: 0; width: 100%;
+    }
+    input[type=color] { appearance: none; border: 0; border-radius: .35rem; width: 2.4rem; height: 2.35rem; padding: .1rem; background: #726053; cursor: pointer; }
+    input[type=color]::-webkit-color-swatch-wrapper { padding: .1rem; }
+    .color { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .45rem; }
+    .color input:not([type=color]) { font: .9rem ui-monospace, monospace; }
+    details { margin-top: 1rem; }
+    summary { cursor: pointer; }
+    details .colors { margin-top: .8rem; }
+    :focus-visible { outline: 2px solid #ffb381; outline-offset: 3px; }
+    .preview { background: var(--bg); color: var(--text); border-radius: .8rem; padding: 1rem; }
+    .preview[data-base=frosted-glass] { background-image: linear-gradient(145deg, #a8c8f077, #fff7, #c4adde77); }
+    .sample { padding: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: .75rem; }
+    .sample p { color: var(--muted); margin: .25rem 0 .85rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .85rem; padding: .5rem .7rem; border-radius: .55rem; background: var(--surface); }
+    .chip { font-size: .9rem; font-weight: 600; }
+    .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.05rem; }
+    .button, .sample-action { display: inline-block; padding: .55rem .8rem; border-radius: .55rem; font-weight: 650; }
+    .button { color: #201009; background: #ff9d62; border: 1px solid #ff9d62; cursor: pointer; }
+    .button.secondary { color: inherit; background: transparent; border-color: #726053; }
+    .sample-action { color: var(--on-accent); background: var(--accent); box-shadow: 0 0 .8rem var(--glow); }
+    .sample-action:hover { background: var(--accent-hover); }
+    .sample-action:active { background: var(--accent-pressed); }
+    #status { min-height: 1.5em; margin: .7rem 0 0; }
+    @media (max-width: 48rem) { form { grid-template-columns: minmax(0, 1fr); } }
+    @media (max-width: 25rem) { .details, .colors { grid-template-columns: minmax(0, 1fr); } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Hestia RS Theme Builder</h1>
+    <p>Start with a palette, try your colors, and download a shareable ZIP.</p>
+    <form id="builder">
+      <section aria-label="Theme settings">
+        <div class="details">
+          <label>Starting palette <select id="starter"></select></label>
+          <label>Theme name <input id="name" required maxlength="80"></label>
+          <label>Pack ID <input id="pack-id" required maxlength="64" spellcheck="false"></label>
+          <label>Version <input id="version" required value="1.0.0" spellcheck="false"></label>
+        </div>
+        <h2>Colors</h2>
+        <div class="colors" id="main-colors"></div>
+        <details>
+          <summary>More colors</summary>
+          <div class="colors" id="extra-colors"></div>
+        </details>
+      </section>
+      <section aria-label="Preview and downloads">
+        <h2>Preview</h2>
+        <div id="preview" class="preview">
+          <div class="sample">
+            <strong id="preview-name">Haven</strong>
+            <p>Ready to stream</p>
+            <span class="sample-action">Play Desktop</span>
+          </div>
+          <div class="chips">
+            <span class="chip" style="color: var(--ok)">Online</span>
+            <span class="chip" style="color: var(--warn)">Check display</span>
+            <span class="chip" style="color: var(--danger)">Offline</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="button" type="submit">Download ZIP</button>
+          <button class="button secondary" type="submit" value="json">Download JSON</button>
+        </div>
+        <p id="status" role="status"></p>
+      </section>
+    </form>
+  </main>
+  <script id="palettes" type="application/json">
+{
+  "hearth": {
+    "name": "Hearth",
+    "base": "hearth",
+    "colors": {
+      "bg": "#110e0c",
+      "surface": "#1a1613",
+      "card": "#231e1a",
+      "card-hover": "#2e2823",
+      "border": "#3b332c",
+      "text": "#f5eee8",
+      "muted": "#ab9f95",
+      "faint": "#71675f",
+      "accent": "#ff7a2e",
+      "accent-hover": "#ff9a57",
+      "accent-pressed": "#e3631d",
+      "on-accent": "#1f0c02",
+      "glow": "#ff7a2e80",
+      "ok": "#67d491",
+      "warn": "#f5b43f",
+      "danger": "#ff6868",
+      "info": "#9ec5ea",
+      "scrim": "#0a0807c8"
+    }
+  },
+  "daylight": {
+    "name": "Daylight",
+    "base": "daylight",
+    "colors": {
+      "bg": "#edf2f9",
+      "surface": "#f8fafd",
+      "card": "#ffffff",
+      "card-hover": "#e5ebf9",
+      "border": "#bdc9df",
+      "text": "#172238",
+      "muted": "#44536d",
+      "faint": "#586984",
+      "accent": "#3b4e9d",
+      "accent-hover": "#4359af",
+      "accent-pressed": "#2c3b7d",
+      "on-accent": "#ffffff",
+      "glow": "#415ab74d",
+      "ok": "#176848",
+      "warn": "#795000",
+      "danger": "#aa2642",
+      "info": "#254d93",
+      "scrim": "#172238a8"
+    }
+  },
+  "midnight": {
+    "name": "Midnight",
+    "base": "midnight",
+    "colors": {
+      "bg": "#070709",
+      "surface": "#101015",
+      "card": "#17171e",
+      "card-hover": "#21212b",
+      "border": "#383846",
+      "text": "#f0edf7",
+      "muted": "#c5bfd5",
+      "faint": "#aba5bf",
+      "accent": "#c1a2ff",
+      "accent-hover": "#d2baff",
+      "accent-pressed": "#ae8be9",
+      "on-accent": "#21143b",
+      "glow": "#ac82ff66",
+      "ok": "#83d8a8",
+      "warn": "#f1bb79",
+      "danger": "#ff9eb5",
+      "info": "#9ec6fa",
+      "scrim": "#070709d9"
+    }
+  },
+  "electric": {
+    "name": "Electric",
+    "base": "electric",
+    "colors": {
+      "bg": "#0a1427",
+      "surface": "#101e35",
+      "card": "#142842",
+      "card-hover": "#1b3958",
+      "border": "#38708d",
+      "text": "#eaf9ff",
+      "muted": "#becfe2",
+      "faint": "#a2bad5",
+      "accent": "#34efff",
+      "accent-hover": "#81f8ff",
+      "accent-pressed": "#08c6df",
+      "on-accent": "#041824",
+      "glow": "#34efff66",
+      "ok": "#82ffc9",
+      "warn": "#ffda70",
+      "danger": "#ff9bb7",
+      "info": "#a9d5ff",
+      "scrim": "#071225dd"
+    }
+  },
+  "frosted-glass": {
+    "name": "Frosted Glass",
+    "base": "frosted-glass",
+    "colors": {
+      "bg": "#dae8f5",
+      "surface": "#f8fbfff0",
+      "card": "#ffffffc8",
+      "card-hover": "#e9f3ffc9",
+      "border": "#9eaccb",
+      "text": "#14263f",
+      "muted": "#394e6b",
+      "faint": "#425a76",
+      "accent": "#31508a",
+      "accent-hover": "#3c5c95",
+      "accent-pressed": "#273e70",
+      "on-accent": "#ffffff",
+      "glow": "#496cab55",
+      "ok": "#17664b",
+      "warn": "#765000",
+      "danger": "#992542",
+      "info": "#254d8c",
+      "scrim": "#192d4ab8"
+    }
+  },
+  "harbor": {
+    "name": "Harbor",
+    "base": "hearth",
+    "colors": {
+      "bg": "#071214",
+      "surface": "#102023",
+      "card": "#16292c",
+      "card-hover": "#20383b",
+      "border": "#355154",
+      "text": "#f0fbf8",
+      "muted": "#bed2ce",
+      "faint": "#9ab7b1",
+      "accent": "#62e5cd",
+      "accent-hover": "#8cf5df",
+      "accent-pressed": "#49c9b3",
+      "on-accent": "#072622",
+      "glow": "#62e5cd66",
+      "ok": "#83d8a8",
+      "warn": "#f1bb79",
+      "danger": "#ff9eb5",
+      "info": "#9ec6fa",
+      "scrim": "#071214d9"
+    }
+  }
+}
+  </script>
+  <script>
+    "use strict";
+    const find = id => document.getElementById(id);
+    const palettes = JSON.parse(find("palettes").textContent);
+    const form = find("builder");
+    const starter = find("starter");
+    const nameInput = find("name");
+    const idInput = find("pack-id");
+    const version = find("version");
+    const preview = find("preview");
+    const status = find("status");
+    const roles = {
+      bg: "Background", surface: "Panels", card: "Cards", text: "Text",
+      muted: "Muted text", accent: "Accent", "on-accent": "Accent text", glow: "Focus glow",
+      "card-hover": "Hovered card", border: "Borders", faint: "Faint text",
+      "accent-hover": "Hovered accent", "accent-pressed": "Pressed accent",
+      ok: "Success", warn: "Warning", danger: "Error", info: "Information", scrim: "Backdrop overlay"
+    };
+    const fields = {};
+    const alphaRoles = new Set(["surface", "card", "card-hover", "glow", "scrim"]);
+    const solid = /^#[0-9a-f]{6}$/i;
+    const alpha = /^#[0-9a-f]{8}$/i;
+    const packId = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/;
+    const release = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+    let customId = false;
+
+    function validateColor(role, value) {
+      return solid.test(value) || (alphaRoles.has(role) && alpha.test(value));
+    }
+
+    function updateColor(role) {
+      const {hex, swatch} = fields[role];
+      const value = hex.value.trim();
+      const valid = validateColor(role, value);
+      hex.setCustomValidity(valid ? "" : alphaRoles.has(role) ? "Use #RRGGBB or #RRGGBBAA." : "Use #RRGGBB.");
+      if (valid) {
+        preview.style.setProperty("--" + role, value);
+        swatch.value = value.slice(0, 7);
+      }
+    }
+
+    function updateName() {
+      const name = nameInput.value.trim();
+      find("preview-name").textContent = name || "Haven";
+      if (!customId) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        idInput.value = "custom." + (slug.slice(0, 57).replace(/-$/, "") || "theme");
+      }
+    }
+
+    for (const [key, preset] of Object.entries(palettes)) {
+      starter.append(new Option(preset.name, key));
+    }
+    Object.entries(roles).forEach(([role, label], index) => {
+      const group = document.createElement("div");
+      const row = document.createElement("div");
+      const caption = document.createElement("label");
+      const hex = document.createElement("input");
+      const swatch = document.createElement("input");
+      hex.id = "hex-" + role;
+      hex.required = true;
+      hex.maxLength = alphaRoles.has(role) ? 9 : 7;
+      hex.spellcheck = false;
+      caption.htmlFor = hex.id;
+      caption.textContent = label;
+      swatch.type = "color";
+      swatch.setAttribute("aria-label", "Pick " + label.toLowerCase());
+      row.className = "color";
+      row.append(swatch, hex);
+      group.append(caption, row);
+      find(index < 8 ? "main-colors" : "extra-colors").append(group);
+      fields[role] = {hex, swatch};
+      hex.addEventListener("input", () => updateColor(role));
+      hex.addEventListener("invalid", () => {
+        const group = hex.closest("details");
+        if (group) group.open = true;
+      });
+      swatch.addEventListener("input", () => {
+        const before = hex.value.trim();
+        hex.value = swatch.value + (alphaRoles.has(role) && alpha.test(before) ? before.slice(7) : "");
+        updateColor(role);
+      });
+    });
+
+    function applyStarter() {
+      const preset = palettes[starter.value];
+      preview.dataset.base = preset.base;
+      for (const [role, value] of Object.entries(preset.colors)) {
+        fields[role].hex.value = value;
+        updateColor(role);
+      }
+      nameInput.value = preset.name;
+      customId = false;
+      updateName();
+      status.textContent = "";
+    }
+
+    function crc32(bytes) {
+      let value = 0xffffffff;
+      for (const byte of bytes) {
+        value ^= byte;
+        for (let bit = 0; bit < 8; bit++) {
+          value = (value >>> 1) ^ ((value & 1) ? 0xedb88320 : 0);
+        }
+      }
+      return (value ^ 0xffffffff) >>> 0;
+    }
+
+    // A single stored entry, followed by its directory and the end record.
+    function zipManifest(json) {
+      const encoder = new TextEncoder();
+      const filename = encoder.encode("manifest.json");
+      const data = encoder.encode(json);
+      const crc = crc32(data);
+      const directory = 30 + filename.length + data.length;
+      const ending = directory + 46 + filename.length;
+      const bytes = new Uint8Array(ending + 22);
+      const view = new DataView(bytes.buffer);
+      const short = (offset, value) => view.setUint16(offset, value, true);
+      const long = (offset, value) => view.setUint32(offset, value, true);
+      const dosDate = 0x21; // January 1, 1980.
+
+      long(0, 0x04034b50);
+      short(4, 20);
+      short(12, dosDate);
+      long(14, crc);
+      long(18, data.length);
+      long(22, data.length);
+      short(26, filename.length);
+      bytes.set(filename, 30);
+      bytes.set(data, 30 + filename.length);
+
+      long(directory, 0x02014b50);
+      short(directory + 4, 20);
+      short(directory + 6, 20);
+      short(directory + 14, dosDate);
+      long(directory + 16, crc);
+      long(directory + 20, data.length);
+      long(directory + 24, data.length);
+      short(directory + 28, filename.length);
+      bytes.set(filename, directory + 46);
+
+      long(ending, 0x06054b50);
+      short(ending + 8, 1);
+      short(ending + 10, 1);
+      long(ending + 12, ending - directory);
+      long(ending + 16, directory);
+      return bytes;
+    }
+
+    function download(data, filename, type) {
+      const url = URL.createObjectURL(new Blob([data], {type}));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }
+
+    starter.addEventListener("change", applyStarter);
+    nameInput.addEventListener("input", () => {
+      nameInput.setCustomValidity("");
+      updateName();
+      idInput.setCustomValidity("");
+    });
+    idInput.addEventListener("input", () => {
+      customId = true;
+      idInput.setCustomValidity("");
+    });
+    version.addEventListener("input", () => version.setCustomValidity(""));
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      const name = nameInput.value.trim();
+      const id = idInput.value.trim();
+      const versionNumber = version.value.trim();
+      nameInput.setCustomValidity(name ? "" : "Enter a theme name.");
+      idInput.setCustomValidity(packId.test(id) ? "" : "Use a lowercase ID such as custom.harbor.");
+      version.setCustomValidity(release.test(versionNumber) ? "" : "Use a version such as 1.0.0.");
+      if (!form.reportValidity()) return;
+      const palette = Object.fromEntries(Object.entries(fields).map(([role, field]) => [role, field.hex.value.trim()]));
+      const manifest = {
+        format_version: 1, id, name, version: versionNumber, base: palettes[starter.value].base,
+        components: {palette}
+      };
+      const json = JSON.stringify(manifest, null, 2) + "\n";
+      const jsonOnly = event.submitter?.value === "json";
+      const filename = jsonOnly ? "manifest.json" : id + ".zip";
+      download(jsonOnly ? json : zipManifest(json), filename, jsonOnly ? "application/json" : "application/zip");
+      status.textContent = "Downloaded " + filename + ".";
+    });
+    applyStarter();
+  </script>
+</body>
+</html>

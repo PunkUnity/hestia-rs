@@ -13,12 +13,13 @@ from zlib import error as CompressionError
 MANIFEST = "manifest.json"
 MANIFEST_LIMIT = 32 * 1024
 ZIP_LIMIT = 64 * 1024
+BASES = ("hearth", "daylight", "midnight", "electric", "frosted-glass")
 ROLES = frozenset((
     "bg", "surface", "card", "card-hover", "border", "text", "muted", "faint",
     "accent", "accent-hover", "accent-pressed", "on-accent", "glow", "ok",
     "warn", "danger", "info", "scrim",
 ))
-ALPHA_ROLES = {"glow", "scrim"}
+ALPHA_ROLES = {"surface", "card", "card-hover", "glow", "scrim"}
 PACK_ID = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)+")
 RELEASE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 RGB = re.compile(r"#[0-9a-fA-F]{6}")
@@ -60,8 +61,8 @@ def read_manifest(source):
     release = manifest.get("version")
     if not isinstance(release, str) or not RELEASE.fullmatch(release):
         raise ValueError("Use a pack version such as 1.0.0.")
-    if manifest.get("base") not in ("hearth", "daylight"):
-        raise ValueError("Choose hearth or daylight as the base palette.")
+    if manifest.get("base") not in BASES:
+        raise ValueError("Choose a built-in base palette: " + ", ".join(BASES) + ".")
 
     components = manifest.get("components")
     if not isinstance(components, dict) or components.keys() != {"palette"}:

@@ -1,12 +1,29 @@
 # Make a Hestia RS theme pack
 
-[Download the Harbor starter ZIP](../tools/theme-packs/harbor.zip). It uses standard ZIP compression, so you can open it with your usual archive app and share it as a regular `.zip` attachment.
+1. Download and extract the Theme Builder. Open `theme-builder.html` in a browser. The builder works offline. [Download Theme Builder](../tools/theme-packs/theme-builder.zip)
+2. Pick a starting palette, give your theme a name, and edit the colors. Use the swatches or enter hex values. The preview updates as you edit.
+3. Select **Download ZIP** and share the file as-is. You can also download the editable JSON. Keep the same pack ID when publishing a new version of an existing theme.
 
-1. Extract `manifest.json` and give the pack a new `id` and `name`. Use an ID like `your-name.harbor` and keep it for later versions of the same pack.
-2. Choose `hearth` or `daylight` as the base. Set the colors you want to change under `components.palette`. Any role you omit follows the base.
-3. Compress `manifest.json` itself to make a ZIP with that file at the root. Send the ZIP as an attachment or share a direct download link.
+## Starter ZIPs
 
-For example, this palette changes only the buttons and focus glow.
+Each ZIP has a complete palette you can edit by hand or use as a reference.
+
+| Starter | Appearance | Download |
+| --- | --- | --- |
+| Hearth | Warm charcoal and ember orange | [hearth.zip](../tools/theme-packs/hearth.zip) |
+| Daylight | Cool white and indigo | [daylight.zip](../tools/theme-packs/daylight.zip) |
+| Midnight | Near-black with violet accents | [midnight.zip](../tools/theme-packs/midnight.zip) |
+| Electric | Deep navy and bright cyan | [electric.zip](../tools/theme-packs/electric.zip) |
+| Frosted Glass | Ice blue and slate | [frosted-glass.zip](../tools/theme-packs/frosted-glass.zip) |
+| Harbor | Dark teal and mint | [harbor.zip](../tools/theme-packs/harbor.zip) |
+
+The five built-ins can be used as the manifest's `base`. Harbor is a complete palette built on Hearth. The Frosted Glass starter includes the original translucent panel colors.
+
+## Edit a manifest directly
+
+Extract `manifest.json`, set a distinct lowercase `id` such as `your-name.seaglass`, and update the name and colors. Choose one of `hearth`, `daylight`, `midnight`, `electric`, or `frosted-glass` as the base. Omitted colors follow the base. Compress `manifest.json` itself so it sits at the root of the ZIP.
+
+This example changes the buttons and focus glow.
 
 ```json
 {
@@ -27,7 +44,7 @@ For example, this palette changes only the buttons and focus glow.
 }
 ```
 
-The starter shows every supported color role. Use `#RRGGBB` for colors and optionally `#RRGGBBAA` for `glow` and `scrim`. Keep text readable on every surface and check `on-accent` against all three accent button states. [Full starter manifest](../tools/theme-packs/harbor/manifest.json)
+Use `#RRGGBB` for colors. The `surface`, `card`, `card-hover`, `glow`, and `scrim` roles also accept `#RRGGBBAA` for transparency. Check text against its surface, and check accent text against all three accent button states. [Full starter manifest](../tools/theme-packs/harbor/manifest.json)
 
 ## Build or check from a checkout
 
@@ -38,4 +55,4 @@ python3 tools/theme-packs/pack.py build manifest.json -o seaglass.zip
 python3 tools/theme-packs/pack.py check seaglass.zip
 ```
 
-Version 1 covers palettes. The built-in theme build supports Hearth and Daylight. The app’s ZIP picker and preview are a follow-up.
+Version 1 covers sharing palettes. Importing packs inside Hestia RS requires the upcoming ZIP picker.
