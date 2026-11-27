@@ -360,8 +360,8 @@ pub struct LaunchedSession {
     pub server_info: ServerInfo,
     /// Hermes session preparation result, when the host supports it.
     pub prepared: Option<SessionPrepareResponse>,
-    /// Why Hermes declined to prepare the session (the app was launched in
-    /// plain GameStream mode instead).
+    /// Why the capability check or session preparation failed. The app
+    /// was launched in plain GameStream mode instead.
     pub prepare_error: Option<String>,
     /// Settings in effect when the app was launched.
     pub settings: StreamSettings,
@@ -518,9 +518,9 @@ impl LaunchedSession {
                 Some(why) => r.field(
                     "Launch",
                     "Hermes session",
-                    format!("DECLINED: {why} (plain GameStream used)"),
+                    format!("not prepared: {why} (plain GameStream used)"),
                 ),
-                None => r.field("Launch", "Hermes session", "not prepared (not a Hermes host)"),
+                None => r.field("Launch", "Hermes session", "not prepared (Hestia API unavailable)"),
             },
         }
         r.event(if self.response.resumed {
@@ -603,6 +603,20 @@ fn hermes_platform(platform: &str) -> &'static str {
         "macos" => "macos",
         "steamdeck" => "steamdeck",
         _ => "unknown",
+    }
+}
+
+/// A missing API endpoint is an ordinary GameStream fallback. Keep probe
+/// failures and incompatible responses available to the launch report.
+fn session_prepare_capabilities(probe: hestia_api::Result<Capabilities>) -> Result<Option<Capabilities>, String> {
+    match probe {
+        Ok(caps) if caps.is_compatible() => Ok(Some(caps)),
+        Ok(caps) => Err(format!(
+            "incompatible Hestia capabilities (host protocol {}, supported client versions {}–{})",
+            caps.hestia_protocol, caps.min_client_protocol, caps.max_client_protocol,
+        )),
+        Err(error) if error.is_unsupported() => Ok(None),
+        Err(error) => Err(format!("Hestia capabilities check failed: {error}")),
     }
 }
 
@@ -1430,9 +1444,11 @@ impl HestiaClient {
         }
 
         let (prepared, prepare_error) = match self.prepare_hermes_session(&client, &settings, device, app_id) {
-            Some(Ok(prepared)) => (Some(prepared), None),
-            Some(Err(e)) => (None, Some(e)),
-            None => (None, None),
+            Ok(prepared) => (prepared, None),
+            Err(why) => {
+                warn!("Hermes session not prepared, continuing with plain GameStream: {why}");
+                (None, Some(why))
+            }
         };
 
         let response = if server_info.is_busy() {
@@ -1464,14 +1480,14 @@ impl HestiaClient {
         settings: &StreamSettings,
         device: &DeviceInfo,
         app_id: u32,
-    ) -> Option<std::result::Result<SessionPrepareResponse, String>> {
+    ) -> Result<Option<SessionPrepareResponse>, String> {
         let api = HestiaApi::new(client);
-        let caps = api.capabilities().ok().filter(Capabilities::is_compatible)?;
+        let Some(caps) = session_prepare_capabilities(api.capabilities())? else {
+            return Ok(None);
+        };
         // Hermes rejects (400) rather than negotiates: check what it says it
         // accepts and explain, instead of sending something it will refuse.
-        if let Err(why) = check_prepare_limits(&caps.limits, settings) {
-            return Some(Err(why));
-        }
+        check_prepare_limits(&caps.limits, settings)?;
         let features = &caps.features;
         let hdr = settings.hdr && features.hdr_mode_control;
         let request = SessionPrepareRequest {
@@ -1518,17 +1534,13 @@ impl HestiaClient {
                 for warning in &prepared.warnings {
                     warn!("Hermes session warning: {warning}");
                 }
-                Some(Ok(prepared))
+                Ok(Some(prepared))
             }
-            Err(e) => {
-                warn!("Hermes session prepare failed, continuing with plain GameStream: {e}");
-                let why = if e.is_permission_denied() {
-                    "this device is not allowed to prepare sessions".to_owned()
-                } else {
-                    e.to_string()
-                };
-                Some(Err(why))
-            }
+            Err(e) => Err(if e.is_permission_denied() {
+                "this device is not allowed to prepare sessions".to_owned()
+            } else {
+                e.to_string()
+            }),
         }
     }
 
@@ -1675,6 +1687,50 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    #[test]
+    fn launch_report_distinguishes_capability_probe_failure_from_a_missing_endpoint() {
+        let unsupported = hestia_api::ApiError::Host {
+            status: 404,
+            code: String::new(),
+            message: String::new(),
+        };
+        assert!(session_prepare_capabilities(Err(unsupported)).unwrap().is_none());
+        let mut launch = session("rtspenc://192.168.1.20:48010", CodecPreference::Auto);
+        let mut fallback = report::StreamReport::new("Desktop", 0);
+        launch.add_to_report(&mut fallback);
+        assert!(fallback.render().contains("not prepared (Hestia API unavailable)"));
+
+        let timeout = hestia_api::ApiError::Transport(hestia_nvhttp::NvHttpError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "probe timed out",
+        )));
+        launch.response.resumed = true;
+        launch.prepare_error = Some(session_prepare_capabilities(Err(timeout)).unwrap_err());
+        let mut resumed = report::StreamReport::new("Desktop", 0);
+        launch.add_to_report(&mut resumed);
+        let rendered = resumed.render();
+        assert!(rendered.contains("Hestia capabilities check failed: network error: probe timed out"));
+        assert!(!rendered.contains("not a Hermes host"));
+    }
+
+    #[test]
+    fn session_preparation_requires_compatible_capabilities() {
+        let caps = Capabilities {
+            ok: true,
+            hestia_protocol: 2,
+            min_client_protocol: 2,
+            max_client_protocol: 3,
+            ..Default::default()
+        };
+        let why = session_prepare_capabilities(Ok(caps.clone())).unwrap_err();
+        assert!(why.contains("host protocol 2"));
+        let compatible = Capabilities {
+            min_client_protocol: 1,
+            ..caps
+        };
+        assert!(session_prepare_capabilities(Ok(compatible)).unwrap().is_some());
     }
 
     const H264: VideoFormat = VideoFormat {
