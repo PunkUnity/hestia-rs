@@ -2,9 +2,11 @@ import { Theme, ThemeStyle, Nav, FrostBackdrop, FrostGlints, Icon, ActionButton,
 import { HostCard, AppCard, CommandRow, PreflightRow, HostsPage, AppsPage, SessionPage, SettingsPage, ToolsPage, ReportPage } from "pages.slint";
 import { SessionLaunch } from "session-launch.slint";
 import { StreamView, PadControl } from "stream.slint";
+import { InstalledThemePack } from "controls.slint";
 
 export { HostCard, AppCard, CommandRow, PreflightRow } from "pages.slint";
 export { PadControl } from "stream.slint";
+export { InstalledThemePack } from "controls.slint";
 // Themes set the palette's run-time roles (the launch's, for now) from Rust.
 export { Theme, ThemeStyle, PaletteOverride, VoltagePaths } from "theme.slint";
 
@@ -52,6 +54,7 @@ export component AppWindow inherits Window {
     in property <[string]> theme-menu: root.theme-names;
     in property <[ThemeStyle]> theme-styles;
     in-out property <string> theme-import-message;
+    in property <[InstalledThemePack]> installed-theme-packs;
     out property <int> appearance-session;
     private property <int> cfg-theme: 0;
     private property <int> cfg-launch-style: 0;
@@ -81,6 +84,8 @@ export component AppWindow inherits Window {
         Theme.effects-motion = root.effects-motion;
     }
     callback import-theme(int);
+    callback open-theme-manager();
+    callback remove-theme-packs(int) -> int;
     callback discard-theme-preview();
     callback save-theme(int, int) -> int;
 
@@ -832,6 +837,9 @@ export component AppWindow inherits Window {
             theme-menu: root.theme-menu;
             theme-import-message: root.theme-import-message;
             import-theme => { root.import-theme(root.appearance-session); }
+            installed-theme-packs: root.installed-theme-packs;
+            open-theme-manager => { root.open-theme-manager(); }
+            remove-theme-packs(index) => { return root.remove-theme-packs(index); }
             launch-style <=> root.cfg-launch-style;
             theme-save-failed: root.theme-save-failed;
             show-video-through-loss <=> root.cfg-show-video-through-loss;

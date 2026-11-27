@@ -644,6 +644,139 @@ export component OptionSheet inherits Rectangle {
     }
 }
 
+export struct InstalledThemePack {
+    id: string,
+    name: string,
+    active: bool,
+    checked: bool,
+}
+
+export component ThemePackManager inherits Rectangle {
+    in property <[InstalledThemePack]> packs;
+    callback dismissed();
+    callback remove-selected() -> bool;
+    private property <int> selected-count;
+    private property <int> focus-row: Nav.keyboard ? 0 : -1;
+    private property <int> cancel-row: root.packs.length;
+    private property <int> remove-row: root.cancel-row + 1;
+    private property <bool> remove-failed;
+
+    function move(row: int, key: string) -> bool {
+        if key == Key.Back || key == Key.Escape {
+            root.dismissed();
+            return true;
+        }
+        if key == Key.UpArrow {
+            root.focus-row = Math.max(0, Math.min(row - 1, root.cancel-row - 1));
+            return true;
+        }
+        if key == Key.DownArrow {
+            root.focus-row = Math.min(row + 1, root.selected-count > 0 ? root.remove-row : root.cancel-row);
+            return true;
+        }
+        if key == Key.LeftArrow && row == root.remove-row {
+            root.focus-row = root.cancel-row;
+            return true;
+        }
+        if key == Key.RightArrow && row == root.cancel-row && root.selected-count > 0 {
+            root.focus-row = root.remove-row;
+            return true;
+        }
+        return key == Key.LeftArrow || key == Key.RightArrow;
+    }
+
+    Modal {
+        width: 100%;
+        height: 100%;
+        hold-focus: root.focus-row < 0;
+        arrow => { root.focus-row = 0; }
+        back => { root.dismissed(); return true; }
+        dismissed => { root.dismissed(); }
+
+        DialogTitle { text: "Manage theme packs"; }
+        DialogText { text: "Removing the active pack switches to its base theme."; }
+        list := Flickable {
+            height: Math.min(rows.preferred-height, Math.max(Theme.control-height, Theme.window-height - 248px));
+            content-height: rows.preferred-height;
+            rows := VerticalLayout {
+                width: list.width;
+                spacing: 2px;
+                for pack[i] in root.packs: RowBase {
+                    accessible-role: checkbox;
+                    accessible-label: pack.name;
+                    accessible-checkable: true;
+                    accessible-checked: pack.checked;
+                    height: line.preferred-height;
+                    want-focus: root.focus-row == i;
+                    nav(key) => { return root.move(i, key); }
+                    entered => { root.focus-row = i; }
+                    clicked => {
+                        let checked = !pack.checked;
+                        pack.checked = checked;
+                        root.selected-count += checked ? 1 : -1;
+                        root.remove-failed = false;
+                    }
+                    line := HorizontalLayout {
+                        padding: 10px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 22px;
+                                height: self.width;
+                                border-radius: 5px;
+                                border-width: 1.5px;
+                                border-color: pack.checked ? Theme.accent : Theme.muted;
+                                background: pack.checked ? Theme.primary-fill : transparent;
+                                if pack.checked: Icon {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                    width: 17px;
+                                    height: self.width;
+                                    name: "check";
+                                    tint: Theme.primary-ink;
+                                }
+                            }
+                        }
+                        RowText {
+                            horizontal-stretch: 1;
+                            label: pack.name;
+                            hint: pack.active ? "In use" : "";
+                        }
+                    }
+                }
+            }
+        }
+        if root.remove-failed: DialogText { text: "Could not remove the selected packs. Try again."; }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            ActionButton {
+                text: "Cancel";
+                want-focus: root.focus-row == root.cancel-row;
+                nav(key) => { return root.move(root.cancel-row, key); }
+                entered => { root.focus-row = root.cancel-row; }
+                clicked => { root.dismissed(); }
+            }
+            ActionButton {
+                text: "Remove selected";
+                kind: 2;
+                enabled: root.selected-count > 0;
+                want-focus: root.focus-row == root.remove-row;
+                nav(key) => { return root.move(root.remove-row, key); }
+                entered => { root.focus-row = root.remove-row; }
+                clicked => {
+                    if root.remove-selected() {
+                        root.dismissed();
+                    } else {
+                        root.remove-failed = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Page title with a back button and the page's actions (children) on the
 // right.
 export component TopBar inherits Rectangle {

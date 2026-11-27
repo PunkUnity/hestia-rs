@@ -6,6 +6,8 @@
 2. In Hestia RS, open **Settings → Appearance → Theme → Load Theme Pack from File** and select the ZIP.
 3. Preview the result and tap **Save** to add it to the theme list and use it on this device. **Back** discards the preview. If you import a new revision with the same pack ID, Save replaces that entry.
 
+To remove imported packs, open **Settings → Appearance → Theme → Manage theme packs**. Check the packs you want to remove and choose **Remove selected**. If you remove the active pack, Hestia RS switches to its base theme.
+
 **Settings → Loading screen** offers Flame, Pulse, Orbit and Still. They use the current theme colors. Preview the selected animation in Settings without connecting to a host.
 
 ## Make and share a pack
