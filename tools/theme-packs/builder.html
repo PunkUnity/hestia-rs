@@ -53,15 +53,25 @@
       animation: voltage 2.8s linear infinite;
     }
     .preview[data-base=dark-rainbow] .sample {
-      background-image: linear-gradient(145deg, #211039, transparent 47%, #0e142b);
+      background-image: linear-gradient(145deg, #110820, transparent 55%, #090c18);
     }
     .preview[data-base=dark-rainbow] #preview-name {
       color: transparent;
-      background: linear-gradient(90deg, #ff749d, #ffd171, #7afbb8, #72e6ff, #bf9cff, #ff85ef);
+      background: linear-gradient(90deg, #ff749d, #ffd171, #7afbb8, #72e6ff, #bf9cff, #ff85ef, #ff749d);
       background-clip: text;
+      background-size: 120% 100%;
+      animation: spectrum 12s linear infinite;
+    }
+    .preview[data-base=dark-rainbow] .sample-action {
+      color: var(--text);
+      background: color-mix(in srgb, var(--card-hover) 92%, var(--accent));
+      box-shadow: 0 0 0 1px var(--border);
     }
     @keyframes voltage { to { left: 66%; } }
-    @media (prefers-reduced-motion: reduce) { .sample::before { animation: none !important; } }
+    @keyframes spectrum { to { background-position-x: -600%; } }
+    @media (prefers-reduced-motion: reduce) {
+      .preview[data-base=electric] .sample::before, .preview[data-base=dark-rainbow] #preview-name { animation: none; }
+    }
     .sample p { color: var(--muted); margin: .25rem 0 .85rem; }
     .chips { display: flex; flex-wrap: wrap; gap: .65rem; margin-top: .85rem; padding: .5rem .7rem; border-radius: .55rem; background: var(--surface); }
     .chip { font-size: .9rem; font-weight: 600; }
@@ -271,10 +281,10 @@
     "base": "dark-rainbow",
     "colors": {
       "bg": "#000000",
-      "surface": "#100b21",
-      "card": "#170e29",
-      "card-hover": "#24173d",
-      "border": "#423060",
+      "surface": "#0b0612",
+      "card": "#0a0613",
+      "card-hover": "#140d20",
+      "border": "#332148",
       "text": "#faf4ff",
       "muted": "#d3c7e4",
       "faint": "#b7a9cf",

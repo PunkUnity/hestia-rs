@@ -16,7 +16,7 @@ Each ZIP has a complete palette you can edit by hand or use as a reference.
 | Electric | Violet-navy panels with a cyan voltage trace | [electric.zip](../tools/theme-packs/electric.zip) |
 | Frosted Glass | Translucent winter-blue panes over a dark ice backdrop | [frosted-glass.zip](../tools/theme-packs/frosted-glass.zip) |
 | Blue | Classic navy panels and cyan controls | [blue.zip](../tools/theme-packs/blue.zip) |
-| Dark Rainbow | Jet black, purple panels and bright spectrum headings | [dark-rainbow.zip](../tools/theme-packs/dark-rainbow.zip) |
+| Dark Rainbow | Jet black, deep violet panels and a slow rainbow across each heading | [dark-rainbow.zip](../tools/theme-packs/dark-rainbow.zip) |
 | Harbor | Dark teal and mint | [harbor.zip](../tools/theme-packs/harbor.zip) |
 
 The seven built-ins can be used as the manifest's `base`. Harbor is a complete palette built on Hearth. ZIPs carry palette values, including translucent panels. The corresponding built-in themes draw the ice, voltage, and spectrum effects.
