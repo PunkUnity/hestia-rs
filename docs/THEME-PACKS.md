@@ -14,7 +14,7 @@ Each ZIP has a complete palette you can edit by hand or use as a reference.
 | Daylight | Cool white and indigo | [daylight.zip](../tools/theme-packs/daylight.zip) |
 | Midnight | Near-black with violet accents | [midnight.zip](../tools/theme-packs/midnight.zip) |
 | Electric | Violet-navy panels with a cyan voltage trace | [electric.zip](../tools/theme-packs/electric.zip) |
-| Frosted Glass | Translucent winter-blue panes over a dark ice backdrop | [frosted-glass.zip](../tools/theme-packs/frosted-glass.zip) |
+| Frosted Glass | Translucent winter-blue panes over gently shimmering ice | [frosted-glass.zip](../tools/theme-packs/frosted-glass.zip) |
 | Blue | Classic navy panels and cyan controls | [blue.zip](../tools/theme-packs/blue.zip) |
 | Dark Rainbow | Jet black, deep violet panels and a slow rainbow across each heading | [dark-rainbow.zip](../tools/theme-packs/dark-rainbow.zip) |
 | Harbor | Dark teal and mint | [harbor.zip](../tools/theme-packs/harbor.zip) |
