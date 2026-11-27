@@ -46,7 +46,7 @@
     }
     .preview[data-base=frosted-glass]::before, .preview[data-base=frosted-glass]::after {
       content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
-      animation: ice-glint 5.4s ease-in-out infinite;
+      animation: ice-glint 3.6s ease-in-out infinite;
     }
     .preview[data-base=frosted-glass]::before {
       background: radial-gradient(circle 8px at 7% 20%, #e2f8ff, transparent),
@@ -57,17 +57,21 @@
       background: radial-gradient(circle 8px at 91% 24%, #e2f8ff, transparent),
         radial-gradient(circle 5px at 16% 73%, #eefcff, transparent),
         radial-gradient(circle 10px at 77% 89%, #dcf6ff, transparent);
-      animation-delay: -2.7s;
+      animation-delay: -1.8s;
     }
     .preview[data-base=electric] .sample {
       position: relative; border-radius: .35rem; border-color: var(--accent);
       box-shadow: 0 0 .6rem var(--glow);
     }
-    .preview[data-base=electric] .sample::before {
-      content: ""; position: absolute; top: -4px; left: 2%; height: 7px; width: 32%;
-      background: linear-gradient(90deg, transparent, #6cedff, #f4ffff, transparent);
-      clip-path: polygon(0 50%, 45% 50%, 53% 6%, 60% 64%, 69% 35%, 100% 50%, 100% 65%, 70% 55%, 61% 100%, 53% 32%, 47% 65%, 0 65%);
-      animation: voltage 2.8s linear infinite;
+    .preview[data-base=electric] .sample::before, .preview[data-base=electric] .sample::after {
+      content: ""; position: absolute; inset: 0 auto auto 0; height: 16px; width: 32%;
+      background: linear-gradient(90deg, #6cedff20, #6cedff, #f4ffff, #ad99ff90);
+      clip-path: polygon(0 46%, 12% 32%, 25% 61%, 38% 36%, 47% 59%, 59% 10%, 72% 50%, 85% 31%, 100% 53%, 87% 44%, 72% 61%, 58% 25%, 47% 75%, 38% 52%, 25% 72%, 11% 44%);
+      offset-path: inset(0 round .35rem);
+      animation: voltage 4.8s linear infinite;
+    }
+    .preview[data-base=electric] .sample::after {
+      animation-delay: -2.4s;
     }
     .preview[data-base=dark-rainbow] .sample {
       background-image: linear-gradient(145deg, #110820, transparent 55%, #090c18);
@@ -77,18 +81,20 @@
       background: linear-gradient(90deg, #ff749d, #ffd171, #7afbb8, #72e6ff, #bf9cff, #ff85ef, #ff749d);
       background-clip: text;
       background-size: 120% 100%;
-      animation: spectrum 12s linear infinite;
+      animation: spectrum 6.1s linear infinite;
     }
     .preview[data-base=dark-rainbow] .sample-action {
       color: var(--text);
       background: color-mix(in srgb, var(--card-hover) 92%, var(--accent));
       box-shadow: 0 0 0 1px var(--border);
     }
-    @keyframes voltage { to { left: 66%; } }
+    @keyframes voltage { to { offset-distance: 100%; } }
     @keyframes spectrum { to { background-position-x: -600%; } }
-    @keyframes ice-glint { 0%, 70%, 100% { opacity: 0; } 35% { opacity: .34; } }
+    @keyframes ice-glint { 0%, 70%, 100% { opacity: 0; } 35% { opacity: .65; } }
     @media (prefers-reduced-motion: reduce) {
-      .preview[data-base=electric] .sample::before, .preview[data-base=dark-rainbow] #preview-name { animation: none; }
+      .preview[data-base=electric] .sample::before, .preview[data-base=electric] .sample::after,
+      .preview[data-base=dark-rainbow] #preview-name { animation: none; }
+      .preview[data-base=electric] .sample::after { offset-distance: 50%; }
       .preview[data-base=frosted-glass]::before, .preview[data-base=frosted-glass]::after { display: none; }
     }
     .sample p { color: var(--muted); margin: .25rem 0 .85rem; }
