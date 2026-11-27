@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "id": "hestia.harbor",
+  "name": "Harbor",
+  "version": "1.0.0",
+  "base": "hearth",
+  "components": {
+    "palette": {
+      "bg": "#071214",
+      "surface": "#102023",
+      "card": "#16292c",
+      "card-hover": "#20383b",
+      "border": "#355154",
+      "text": "#f0fbf8",
+      "muted": "#bed2ce",
+      "faint": "#9ab7b1",
+      "accent": "#62e5cd",
+      "accent-hover": "#8cf5df",
+      "accent-pressed": "#49c9b3",
+      "on-accent": "#072622",
+      "glow": "#62e5cd66",
+      "ok": "#83d8a8",
+      "warn": "#f1bb79",
+      "danger": "#ff9eb5",
+      "info": "#9ec6fa",
+      "scrim": "#071214d9"
+    }
+  }
+}

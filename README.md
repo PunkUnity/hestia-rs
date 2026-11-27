@@ -404,6 +404,7 @@ CI (`.github/workflows/ci.yml`) runs:
 - [docs/FRONTENDS.md](docs/FRONTENDS.md): the UI port, and how to write a
   shell for another toolkit.
 - [docs/ROADMAP.md](docs/ROADMAP.md): what's done and what's next.
+- [docs/THEME-PACKS.md](docs/THEME-PACKS.md) explains how to make and share a palette ZIP.
 
 ## License
 
